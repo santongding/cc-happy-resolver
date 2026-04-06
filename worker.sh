@@ -18,7 +18,7 @@ CLAUDE_STDERR_FILE=
 CLAUDE_REQUESTED_STAGE=
 
 read_requested_stage_from_state() {
-  state_read_json "$STATE_FILE" '.next_stage // ""' ""
+  state_read_json "$STATE_FILE" '.current_stage // ""' ""
 }
 
 cleanup() {
@@ -46,11 +46,18 @@ should_skip_pr() {
   local meta_json=$1
   local state_json=$2
   local current_updated_at last_updated_at
+  local last_stage current_stage
 
   current_updated_at=$(printf '%s\n' "$meta_json" | jq -r '.updatedAt // ""')
   last_updated_at=$(printf '%s\n' "$state_json" | jq -r '.last_pr_updated_at // ""')
+  last_stage=$(printf '%s\n' "$state_json" | jq -r '.last_stage // ""')
+  current_stage=$(printf '%s\n' "$state_json" | jq -r '.current_stage // ""')
 
   if [[ -z "$last_updated_at" ]]; then
+    return 1
+  fi
+
+  if [[ -n "$current_stage" && "$current_stage" != "$last_stage" ]]; then
     return 1
   fi
 
@@ -64,6 +71,8 @@ git_worktree_dirty() {
 persist_system_state() {
   local snapshot=$1
   local meta_json=$2
+  local last_stage=$3
+  local current_stage=$4
   local latest_state_json head_sha pr_updated_at next_json
 
   latest_state_json=$(load_state_json "$STATE_FILE")
@@ -74,10 +83,14 @@ persist_system_state() {
     --arg snapshot "$snapshot" \
     --arg head_sha "$head_sha" \
     --arg pr_updated_at "$pr_updated_at" \
+    --arg last_stage "$last_stage" \
+    --arg current_stage "$current_stage" \
     --arg updated_at "$(now_utc)" '
       .last_snapshot = $snapshot
       | .last_head_sha = $head_sha
       | .last_pr_updated_at = $pr_updated_at
+      | .last_stage = $last_stage
+      | .current_stage = $current_stage
       | .updated_at = $updated_at
     ')
 
@@ -152,7 +165,6 @@ run_claude_for_pr() {
   export PR_LOOP_LOCK_FILE="$LOCK_FILE"
   export PR_LOOP_WORKER_PID="$$"
   export PR_LOOP_REPO_ROOT="$(pwd -P)"
-  "$PR_LOOP_WORKER_DIR/statectl.sh" clear-next-stage >/dev/null 2>&1
 
   log_info "starting Claude runner command=${claude_cmd} filter=$claude_filter prompt_file=$PROMPT_FILE"
 
@@ -194,8 +206,6 @@ run_claude_for_pr() {
     log_warn "Claude did not record a valid next stage via statectl; keeping current stage"
     CLAUDE_REQUESTED_STAGE=$stage
   fi
-
-  "$PR_LOOP_WORKER_DIR/statectl.sh" clear-next-stage >/dev/null 2>&1
 }
 
 validate_stage_transition() {
@@ -224,6 +234,7 @@ process_pr() {
   local pr_number=$1
   local state_json meta_json current_stage pre_snapshot last_snapshot head_sha
   local requested_stage next_stage github_changed=0
+  local pending_stage_transition=0
   local refreshed_meta_json refreshed_ctx_json final_snapshot final_meta_json
 
   export PR_LOOP_LOG_PR="$pr_number"
@@ -256,17 +267,20 @@ process_pr() {
   gh_write_context_cache "$(gh_collect_context "$pr_number")" "$CTX_FILE"
   current_stage=$(gh_pr_stage "$CTX_FILE")
   pre_snapshot=$(gh_pr_snapshot "$CTX_FILE")
+  if [[ "$(printf '%s\n' "$state_json" | jq -r '.current_stage // ""')" != "$(printf '%s\n' "$state_json" | jq -r '.last_stage // ""')" ]]; then
+    pending_stage_transition=1
+  fi
   log_info "current stage=$current_stage pre_snapshot=${pre_snapshot:0:12}"
 
   if [[ "$current_stage" == "finished" ]]; then
-    persist_system_state "$pre_snapshot" "$meta_json"
+    persist_system_state "$pre_snapshot" "$meta_json" "$current_stage" "$current_stage"
     log_info "PR is already finished"
     return 0
   fi
 
   last_snapshot=$(printf '%s\n' "$state_json" | jq -r '.last_snapshot // ""')
-  if [[ -n "$last_snapshot" && "$last_snapshot" == "$pre_snapshot" ]]; then
-    persist_system_state "$pre_snapshot" "$meta_json"
+  if [[ "$pending_stage_transition" != "1" && -n "$last_snapshot" && "$last_snapshot" == "$pre_snapshot" ]]; then
+    persist_system_state "$pre_snapshot" "$meta_json" "$current_stage" "$current_stage"
     log_info "snapshot unchanged; skipping (snapshot=${pre_snapshot:0:12})"
     return 0
   fi
@@ -305,7 +319,7 @@ process_pr() {
   fi
 
   log_info "final snapshot=${final_snapshot:0:12}"
-  persist_system_state "$final_snapshot" "$final_meta_json"
+  persist_system_state "$final_snapshot" "$final_meta_json" "$current_stage" "$next_stage"
   log_info "completed processing"
 }
 

@@ -107,7 +107,7 @@ test_statectl_updates_are_sanitized_and_scoped() {
   assert_eq "[5,9]" "$(printf '%s\n' "$state_json" | jq -c '.last_solved_comment_ids')"
 }
 
-test_statectl_tracks_next_stage() {
+test_statectl_rolls_stage_state() {
   local tmpdir state_file lock_file state_json
   tmpdir=$(mktemp -d)
   state_file="$tmpdir/pr-next-stage.state.json"
@@ -120,12 +120,12 @@ test_statectl_tracks_next_stage() {
     export PR_LOOP_LOCK_FILE="$lock_file"
     export PR_LOOP_WORKER_PID="$$"
     "$ROOT_DIR/statectl.sh" set-next-stage review
-    "$ROOT_DIR/statectl.sh" clear-next-stage
     "$ROOT_DIR/statectl.sh" set-next-stage finished
   )
 
   state_json=$(load_state_json "$state_file")
-  assert_eq "finished" "$(printf '%s\n' "$state_json" | jq -r '.next_stage')"
+  assert_eq "review" "$(printf '%s\n' "$state_json" | jq -r '.last_stage')"
+  assert_eq "finished" "$(printf '%s\n' "$state_json" | jq -r '.current_stage')"
 }
 
 test_statectl_tracks_recent_bot_comment_ids() {
@@ -164,6 +164,82 @@ EOF
   state_json=$(load_state_json "$state_file")
   assert_eq "[12,34]" "$(printf '%s\n' "$state_json" | jq -c '.last_solved_comment_ids')"
   assert_eq "[56,78]" "$(printf '%s\n' "$state_json" | jq -c '.recent_bot_comment_ids')"
+  assert_eq "" "$(printf '%s\n' "$state_json" | jq -r '.last_stage')"
+  assert_eq "" "$(printf '%s\n' "$state_json" | jq -r '.current_stage')"
+}
+
+test_should_skip_pr_allows_pending_stage_transition() {
+  local meta_json state_json
+
+  meta_json='{"updatedAt":"2026-04-06T00:02:00Z"}'
+  state_json='{"last_pr_updated_at":"2026-04-06T00:02:00Z","last_stage":"plan","current_stage":"impl"}'
+
+  if should_skip_pr "$meta_json" "$state_json"; then
+    fail "expected pending stage transition to bypass should_skip_pr"
+  fi
+}
+
+test_process_pr_runs_next_stage_even_when_metadata_and_snapshot_are_unchanged() {
+  local tmpdir state_root repo_dir state_file lock_file actions_file final_state expected_snapshot
+  tmpdir=$(mktemp -d)
+  state_root="$tmpdir/state"
+  repo_dir="$tmpdir/repo"
+  state_file="$state_root/acme__demo/pr-8.state.json"
+  lock_file="$state_root/acme__demo/pr-8.lock"
+  actions_file="$tmpdir/actions.log"
+  mkdir -p "$repo_dir"
+
+  (
+    cd "$repo_dir"
+    git init -q
+    git remote add origin https://github.com/acme/demo.git
+
+    export PR_LOOP_STATE_ROOT="$state_root"
+    export PR_LOOP_LOG_REPO="test__repo"
+    export PR_LOOP_LOG_PR="8"
+    state_write_json "$state_file" "$(jq -c '
+      .last_pr_updated_at = "2026-04-06T00:02:00Z"
+      | .last_snapshot = "pending-stage-snapshot"
+      | .last_stage = "plan"
+      | .current_stage = "impl"
+    ' <<<"$(default_state_json)")"
+
+    export TEST_STATE_FILE="$state_file"
+    export TEST_LOCK_FILE="$lock_file"
+    export TEST_ACTIONS_FILE="$actions_file"
+
+    gh_pr_meta() {
+      cat <<'EOF'
+{"number":8,"state":"OPEN","updatedAt":"2026-04-06T00:02:00Z","headRefOid":"def","headRefName":"feature","headRepositoryCloneUrl":"https://github.com/acme/demo.git","isCrossRepository":false,"title":"Stage follow-up","htmlUrl":"https://example.invalid/pr/8"}
+EOF
+    }
+    gh_collect_context() {
+      cat <<'EOF'
+{"meta":{"state":"OPEN","headRefOid":"def","updatedAt":"2026-04-06T00:02:00Z"},"issueComments":[{"id":201,"body":"[pr-loop-bot] <!-- PR-LOOP:STAGE:impl:DO-NOT-EDIT -->","createdAt":"2026-04-06T00:02:00Z","updatedAt":"2026-04-06T00:02:00Z"}],"reviewComments":[],"reviews":[]}
+EOF
+    }
+    gh_prepare_pr_workspace() {
+      :
+    }
+    run_claude_for_pr() {
+      printf 'run-stage:%s\n' "$2" >>"$TEST_ACTIONS_FILE"
+      CLAUDE_REQUESTED_STAGE="$2"
+    }
+    gh_post_stage_marker() {
+      fail "did not expect another stage marker"
+    }
+    process_pr 8
+  )
+
+  expected_snapshot=$(cat <<'EOF' | jq -cS . | sha256_stream
+{"state":"OPEN","headRefOid":"def","stage":"impl","issueComments":[{"id":201,"updatedAt":"2026-04-06T00:02:00Z"}],"reviewComments":[]}
+EOF
+)
+  final_state=$(load_state_json "$state_file")
+  assert_eq "run-stage:impl" "$(cat "$actions_file")"
+  assert_eq "impl" "$(printf '%s\n' "$final_state" | jq -r '.last_stage')"
+  assert_eq "impl" "$(printf '%s\n' "$final_state" | jq -r '.current_stage')"
+  assert_eq "$expected_snapshot" "$(printf '%s\n' "$final_state" | jq -r '.last_snapshot')"
 }
 
 test_stage_parsing_uses_only_strict_markers() {
@@ -512,7 +588,8 @@ test_run_claude_for_pr_streams_output_to_stdout() {
     assert_contains "runner-out" "$(cat "$stdout_file")"
     assert_contains "runner-err" "$(cat "$stdout_file")"
     assert_eq "" "$(cat "$stderr_file")"
-    assert_eq "" "$(state_read_json "$STATE_FILE" '.next_stage // ""' "")"
+    assert_eq "" "$(state_read_json "$STATE_FILE" '.last_stage // ""' "")"
+    assert_eq "review" "$(state_read_json "$STATE_FILE" '.current_stage // ""' "")"
   )
 }
 
@@ -556,7 +633,7 @@ EOF
 
     run_claude_for_pr 42 plan deadbeef '{}' '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
 
-    assert_eq "plan" "$CLAUDE_REQUESTED_STAGE"
+    assert_eq "impl" "$CLAUDE_REQUESTED_STAGE"
   )
 
   output=$(cat "$stdout_file")
@@ -696,8 +773,7 @@ EOF
       printf 'record-solved-comment:99\n' >>"$TEST_ACTIONS_FILE"
       "$ROOT_DIR/statectl.sh" add-solved-comment 99 >/dev/null
       "$ROOT_DIR/statectl.sh" set-next-stage impl >/dev/null
-      CLAUDE_REQUESTED_STAGE=$(state_read_json "$TEST_STATE_FILE" '.next_stage // ""' "")
-      "$ROOT_DIR/statectl.sh" clear-next-stage >/dev/null
+      CLAUDE_REQUESTED_STAGE=$(state_read_json "$TEST_STATE_FILE" '.current_stage // ""' "")
     }
     gh_post_stage_marker() {
       TEST_POSTED_STAGE=$2
@@ -716,8 +792,9 @@ EOF
   assert_eq $'post-issue-comment:501\nrecord-bot-issue-comment:501\npost-review-reply:601\nrecord-bot-review-reply:601\nrecord-solved-comment:99' "$(cat "$actions_file")"
   assert_eq "focus reviewer" "$(printf '%s\n' "$final_state" | jq -r '.hint')"
   assert_eq "[99]" "$(printf '%s\n' "$final_state" | jq -c '.last_solved_comment_ids')"
-  assert_eq "" "$(printf '%s\n' "$final_state" | jq -r '.next_stage')"
   assert_eq "[501,601]" "$(printf '%s\n' "$final_state" | jq -c '.recent_bot_comment_ids')"
+  assert_eq "plan" "$(printf '%s\n' "$final_state" | jq -r '.last_stage')"
+  assert_eq "impl" "$(printf '%s\n' "$final_state" | jq -r '.current_stage')"
   assert_eq "2026-04-06T00:02:00Z" "$(printf '%s\n' "$final_state" | jq -r '.last_pr_updated_at')"
   assert_eq "$expected_snapshot" "$(printf '%s\n' "$final_state" | jq -r '.last_snapshot')"
 }
@@ -729,9 +806,10 @@ main() {
   run_test test_repo_slug_parsing
   run_test test_state_round_trip_and_array_uniqueness
   run_test test_statectl_updates_are_sanitized_and_scoped
-  run_test test_statectl_tracks_next_stage
+  run_test test_statectl_rolls_stage_state
   run_test test_statectl_tracks_recent_bot_comment_ids
   run_test test_load_state_json_migrates_legacy_comment_fields
+  run_test test_should_skip_pr_allows_pending_stage_transition
   run_test test_stage_parsing_uses_only_strict_markers
   run_test test_stage_marker_rendering_is_human_visible
   run_test test_snapshot_changes_when_review_reply_changes
@@ -749,6 +827,7 @@ main() {
   run_test test_run_claude_for_pr_filters_stream_json_output
   run_test test_scan_open_issues_creates_missing_prs_only
   run_test test_make_install_copies_prompt_template_and_skill
+  run_test test_process_pr_runs_next_stage_even_when_metadata_and_snapshot_are_unchanged
   run_test test_process_pr_reloads_state_and_recomputes_snapshot
 
   printf '\nPassed: %d\nFailed: %d\n' "$pass_count" "$fail_count"

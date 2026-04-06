@@ -119,17 +119,10 @@ cmd_set_next_stage() {
       ;;
   esac
 
-  log_info "recording next stage=$stage"
+  log_info "rolling stage state to next stage=$stage"
   write_state_json "$(load_state_json "$PR_LOOP_STATE_FILE" | jq -c --arg stage "$stage" --arg updated_at "$(now_utc)" '
-    .next_stage = $stage
-    | .updated_at = $updated_at
-  ')"
-}
-
-cmd_clear_next_stage() {
-  log_info "clearing pending next stage"
-  write_state_json "$(load_state_json "$PR_LOOP_STATE_FILE" | jq -c --arg updated_at "$(now_utc)" '
-    .next_stage = ""
+    .last_stage = (.current_stage // "")
+    | .current_stage = $stage
     | .updated_at = $updated_at
   ')"
 }
@@ -172,9 +165,6 @@ main() {
       ;;
     set-next-stage)
       cmd_set_next_stage "${1:-}"
-      ;;
-    clear-next-stage)
-      cmd_clear_next_stage
       ;;
     *)
       die "unknown command: ${subcommand:-<empty>}"
