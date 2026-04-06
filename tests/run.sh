@@ -178,7 +178,6 @@ EOF
 )
 
   (
-    STATE_FILE=/tmp/pr-42.state.json
     prompt=$(build_claude_prompt 42 review deadbeef "$state_json" /tmp/pr-42.ctx.json "$meta_json")
     assert_contains "PR: 42" "$prompt"
     assert_contains "Title: Tighten worker prompt rendering" "$prompt"
@@ -186,13 +185,10 @@ EOF
     assert_contains "Stage: review" "$prompt"
     assert_contains "Head SHA: deadbeef" "$prompt"
     assert_contains "Context JSON: /tmp/pr-42.ctx.json" "$prompt"
-    assert_contains "State File: /tmp/pr-42.state.json" "$prompt"
     assert_contains "Last solved comments: 12,34" "$prompt"
     assert_contains "Last solved subcomments: <none>" "$prompt"
     assert_contains "Hint: focus review follow-up" "$prompt"
     assert_contains "Continuously resolve GitHub PR #42 by driving the Codex review cycle." "$prompt"
-    assert_contains "Persistent state lives in /tmp/pr-42.state.json." "$prompt"
-    assert_contains '{"pr_num":"42","repo":null,"last_seen_head_sha":null,"last_review_id":null,"pending_review_thread_ids":[],"failing_checks":[],"last_action":null,"completion":null}' "$prompt"
     assert_contains 'gh pr checkout 42 --repo "$REPO"' "$prompt"
     assert_contains 'gh pr view 42 --repo "$REPO" --json headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup' "$prompt"
     assert_contains "git push origin HEAD:feature/prompt-template before finishing." "$prompt"

@@ -4,7 +4,6 @@ URL: __URL__
 Stage: __STAGE__
 Head SHA: __HEAD_SHA__
 Context JSON: __CONTEXT_JSON__
-State File: __STATE_FILE__
 
 Last solved comments: __LAST_SOLVED_COMMENTS__
 Last solved subcomments: __LAST_SOLVED_SUBCOMMENTS__
@@ -12,35 +11,31 @@ Hint: __HINT__
 
 Continuously resolve GitHub PR #__PR_NUMBER__ by driving the Codex review cycle.
 
-Persistent state lives in __STATE_FILE__. Re-read that file at the start of every iteration and update it before exiting. Use file state and git history as memory across Ralph iterations.
-
 Iteration procedure:
-1. Read __STATE_FILE__. If it does not exist, initialize it with:
-   {"pr_num":"__PR_NUMBER__","repo":null,"last_seen_head_sha":null,"last_review_id":null,"pending_review_thread_ids":[],"failing_checks":[],"last_action":null,"completion":null}
-2. Infer the repo from git remote:
+1. Infer the repo from git remote:
    REPO=$(git remote get-url origin | sed 's|.*github\.com[/:]||' | sed 's|\.git$||')
    Then check out the PR branch:
    gh pr checkout __PR_NUMBER__ --repo "$REPO"
-3. Read current PR metadata for the current head SHA, review decision, merge state, and status checks. Treat reviews as current only when the review commit_id matches the current head SHA.
-4. Fetch reviews for the PR, identify the latest review on the current head, fetch that review's comments, and query unresolved review threads with GraphQL so thread IDs are available for resolution.
-5. Inspect CI for the current head. If required checks are failing, inspect the failing logs with gh, fix the issue locally, run the relevant tests, commit, and push.
-6. For actionable unresolved review feedback on the current head, make the necessary code changes locally, run the relevant tests, commit, and push. If a comment should not be implemented, reply with concrete reasoning instead of ignoring it.
-7. After pushing fixes, reply on each addressed review comment with a short explanation of what changed. Resolve only the threads you actually addressed, using resolveReviewThread.
-8. If there is no Codex review on the current head, or you pushed new commits after the last Codex review, post:
+2. Read current PR metadata for the current head SHA, review decision, merge state, and status checks. Treat reviews as current only when the review commit_id matches the current head SHA.
+3. Fetch reviews for the PR, identify the latest review on the current head, fetch that review's comments, and query unresolved review threads with GraphQL so thread IDs are available for resolution.
+4. Inspect CI for the current head. If required checks are failing, inspect the failing logs with gh, fix the issue locally, run the relevant tests, commit, and push.
+5. For actionable unresolved review feedback on the current head, make the necessary code changes locally, run the relevant tests, commit, and push. If a comment should not be implemented, reply with concrete reasoning instead of ignoring it.
+6. After pushing fixes, reply on each addressed review comment with a short explanation of what changed. Resolve only the threads you actually addressed, using resolveReviewThread.
+7. If there is no Codex review on the current head, or you pushed new commits after the last Codex review, post:
    @codex please review this PR.
    Do not post another request if the current head already has an outstanding Codex review and no new commits were added.
-9. Success criteria:
+8. Success criteria:
    - No more PR review opinions from Codex for the current head
    - required checks are green for the current head
    - PR merge state is mergeable
-   If and only if all three are true, write {"completion":"APPROVED"} to __STATE_FILE__, output exactly:
+   If and only if all three are true, output exactly:
    RESULT_STAGE=finished
    then exit.
-10. If success criteria are not met, save updated state and exit normally. Ralph will feed this same prompt back on the next iteration.
+9. If success criteria are not met, exit normally. Ralph will feed this same prompt back on the next iteration.
 
 Rules:
 - Do not sleep or wait inside the iteration.
-- Do not lie with the completion state.
+- Do not lie with the final result.
 - Exit after one pass; Ralph is responsible for the next iteration.
 - This worker resets and cleans the git worktree before each run.
 - If you change code, you must git add, git commit, and git push __PUSH_REMOTE__ HEAD:__PUSH_REF__ before finishing.

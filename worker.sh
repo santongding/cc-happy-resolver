@@ -88,7 +88,7 @@ build_claude_prompt() {
   local ctx_file=$5
   local meta_json=$6
   local solved_comments solved_subcomments hint title url push_remote push_ref
-  local template_file prompt state_file
+  local template_file prompt
 
   solved_comments=$(printf '%s\n' "$state_json" | jq -r '[.last_solved_comments[]? | tostring] | join(",")')
   solved_subcomments=$(printf '%s\n' "$state_json" | jq -r '[.last_solved_subcomments[]? | tostring] | join(",")')
@@ -100,7 +100,6 @@ build_claude_prompt() {
 
   template_file=$PR_LOOP_CLAUDE_PROMPT_TEMPLATE
   [[ -f "$template_file" ]] || die "missing prompt template: $template_file"
-  state_file=${STATE_FILE:-$(pr_state_file "$pr_number")}
 
   prompt=$(<"$template_file")
   prompt=${prompt//__PR_NUMBER__/$pr_number}
@@ -115,7 +114,6 @@ build_claude_prompt() {
   prompt=${prompt//__PUSH_REMOTE__/$push_remote}
   prompt=${prompt//__PUSH_REF__/$push_ref}
   prompt=${prompt//__WORKER_DIR__/$PR_LOOP_WORKER_DIR}
-  prompt=${prompt//__STATE_FILE__/$state_file}
 
   printf '%s\n' "$prompt"
 }
@@ -137,7 +135,6 @@ run_claude_for_pr() {
 
   claude_cmd=${PR_LOOP_CLAUDE_CMD:-claude -p}
   export PR_LOOP_PR_NUMBER="$pr_number"
-  export PR_LOOP_STATE_FILE="$STATE_FILE"
   export PR_LOOP_LOCK_FILE="$LOCK_FILE"
   export PR_LOOP_WORKER_PID="$$"
   export PR_LOOP_CONTEXT_FILE="$ctx_file"
