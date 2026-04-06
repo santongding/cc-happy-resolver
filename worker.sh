@@ -140,7 +140,7 @@ run_claude_for_pr() {
 
   build_claude_prompt "$pr_number" "$stage" "$head_sha" "$state_json" "$ctx_file" "$meta_json" >"$PROMPT_FILE"
 
-  claude_cmd=${PR_LOOP_CLAUDE_CMD:-claude -p}
+  claude_cmd=${PR_LOOP_CLAUDE_CMD:-claude -p --dangerously-skip-permissions}
   CLAUDE_REQUESTED_STAGE=$stage
   export PR_LOOP_PR_NUMBER="$pr_number"
   export PR_LOOP_LOCK_FILE="$LOCK_FILE"
