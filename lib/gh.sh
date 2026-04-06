@@ -12,6 +12,33 @@ readonly PR_LOOP_STAGE_PREFIX='[pr-loop-bot] PR-LOOP:STAGE:'
 readonly PR_LOOP_STAGE_SUFFIX=':DO-NOT-EDIT'
 readonly PR_LOOP_STAGE_REGEX='^[[:space:]]*\[pr-loop-bot\][[:space:]]*(PR-LOOP:STAGE:(plan|impl|review|finished):DO-NOT-EDIT|<!--[[:space:]]*PR-LOOP:STAGE:(plan|impl|review|finished):DO-NOT-EDIT[[:space:]]*-->)[[:space:]]*$'
 
+gh_api_with_retry() {
+  local max_attempts=${PR_LOOP_GH_API_RETRY_MAX_ATTEMPTS:-3}
+  local delay_seconds=${PR_LOOP_GH_API_RETRY_DELAY_SECONDS:-1}
+  local attempt=1
+  local status=0
+  local response=
+
+  while (( attempt <= max_attempts )); do
+    if response=$(gh api "$@"); then
+      printf '%s\n' "$response"
+      return 0
+    fi
+    status=$?
+
+    if (( attempt >= max_attempts )); then
+      log_warn "gh api failed after $attempt attempt(s): gh api $*"
+      return "$status"
+    fi
+
+    log_warn "gh api attempt $attempt/$max_attempts failed: gh api $*; retrying in ${delay_seconds}s"
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+  done
+
+  return "$status"
+}
+
 gh_stage_marker() {
   local stage=$1
   printf '%s%s%s\n' "$PR_LOOP_STAGE_PREFIX" "$stage" "$PR_LOOP_STAGE_SUFFIX"
@@ -22,7 +49,7 @@ gh_list_open_prs() {
   slug=$(repo_slug) || return 1
   log_info "listing open PRs for $slug"
 
-  gh api --paginate --slurp "repos/$slug/pulls?state=open&per_page=100" | jq -c '
+  gh_api_with_retry --paginate --slurp "repos/$slug/pulls?state=open&per_page=100" | jq -c '
     [
       .[][]? | {
         number,
@@ -50,7 +77,7 @@ gh_list_open_issues() {
   slug=$(repo_slug) || return 1
   log_info "listing open issues for $slug"
 
-  gh api --paginate --slurp "repos/$slug/issues?state=open&per_page=100" | jq -c '
+  gh_api_with_retry --paginate --slurp "repos/$slug/issues?state=open&per_page=100" | jq -c '
     [
       .[][]?
       | select(has("pull_request") | not)
@@ -69,7 +96,7 @@ gh_repo_default_branch() {
   local slug
   slug=$(repo_slug) || return 1
   log_info "fetching default branch for $slug"
-  gh api "repos/$slug" | jq -r '.default_branch // empty'
+  gh_api_with_retry "repos/$slug" | jq -r '.default_branch // empty'
 }
 
 gh_issue_branch_name() {
@@ -173,7 +200,7 @@ gh_pr_meta() {
   slug=$(repo_slug) || return 1
   log_info "fetching lightweight metadata for PR #$pr_number"
 
-  gh api "repos/$slug/pulls/$pr_number" | jq -c '
+  gh_api_with_retry "repos/$slug/pulls/$pr_number" | jq -c '
     {
       number,
       state: ((.state // "") | ascii_upcase),
@@ -207,7 +234,7 @@ gh_collect_context() {
   slug=$(repo_slug) || return 1
   log_info "collecting full context for PR #$pr_number"
   meta_json=$(gh_pr_meta "$pr_number") || return 1
-  issue_json=$(gh api --paginate --slurp "repos/$slug/issues/$pr_number/comments?per_page=100" | jq -c '
+  issue_json=$(gh_api_with_retry --paginate --slurp "repos/$slug/issues/$pr_number/comments?per_page=100" | jq -c '
     [
       .[][]? | {
         id,
@@ -220,7 +247,7 @@ gh_collect_context() {
       }
     ]
   ') || return 1
-  review_json=$(gh api --paginate --slurp "repos/$slug/pulls/$pr_number/comments?per_page=100" | jq -c '
+  review_json=$(gh_api_with_retry --paginate --slurp "repos/$slug/pulls/$pr_number/comments?per_page=100" | jq -c '
     [
       .[][]? | {
         id,
@@ -238,7 +265,7 @@ gh_collect_context() {
       }
     ]
   ') || return 1
-  reviews_json=$(gh api --paginate --slurp "repos/$slug/pulls/$pr_number/reviews?per_page=100" | jq -c '
+  reviews_json=$(gh_api_with_retry --paginate --slurp "repos/$slug/pulls/$pr_number/reviews?per_page=100" | jq -c '
     [
       .[][]? | {
         id,

@@ -4,8 +4,8 @@ Shared setup for every stage:
 - Infer the repo from `git remote`.
 - Verify you are operating on the current PR head.
 - Read PR metadata, the current head SHA, current-head review state, unresolved review threads, and CI state for the current head.
-- Use the provided context JSON path, recent solved external comment ids, recent bot comment ids, and hint to avoid repeating work and duplicate comments.
-- Do not update state during fetch. When you later need to record state, use the prompt-provided `statectl.sh` path and do not hard-code a different path.
+- Use the provided recent solved external comment ids, recent bot comment ids, and one-line hint to avoid repeating work and duplicate comments.
+- Do not update state during fetch. When you later need to record comment-tracking state or a next-pass hint, use the prompt-provided `statectl.sh` path and do not hard-code a different path.
 
 Useful commands while gathering current-head state:
 - Inspect CI for the PR head:

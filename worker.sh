@@ -86,8 +86,7 @@ build_claude_prompt() {
   local stage=$2
   local head_sha=$3
   local state_json=$4
-  local ctx_file=$5
-  local meta_json=$6
+  local meta_json=$5
   local solved_comment_ids recent_bot_comment_ids
   local hint title url push_remote push_ref
   local template_file prompt
@@ -109,7 +108,6 @@ build_claude_prompt() {
   prompt=${prompt//__URL__/$url}
   prompt=${prompt//__STAGE__/$stage}
   prompt=${prompt//__HEAD_SHA__/$head_sha}
-  prompt=${prompt//__CONTEXT_JSON__/$ctx_file}
   prompt=${prompt//__LAST_SOLVED_COMMENT_IDS__/${solved_comment_ids:-<none>}}
   prompt=${prompt//__RECENT_BOT_COMMENT_IDS__/${recent_bot_comment_ids:-<none>}}
   prompt=${prompt//__HINT__/${hint:-<none>}}
@@ -125,8 +123,7 @@ run_claude_for_pr() {
   local stage=$2
   local head_sha=$3
   local state_json=$4
-  local ctx_file=$5
-  local meta_json=$6
+  local meta_json=$5
   local claude_cmd claude_filter exit_code filter_exit
   local result_line raw_stdout_pipe stdout_pipe stderr_pipe
   local stdout_tee_pid stderr_tee_pid filter_pid stdout_tee_exit stderr_tee_exit
@@ -140,7 +137,7 @@ run_claude_for_pr() {
   rm -f "$raw_stdout_pipe" "$stdout_pipe" "$stderr_pipe"
   mkfifo "$raw_stdout_pipe" "$stdout_pipe" "$stderr_pipe"
 
-  build_claude_prompt "$pr_number" "$stage" "$head_sha" "$state_json" "$ctx_file" "$meta_json" >"$PROMPT_FILE"
+  build_claude_prompt "$pr_number" "$stage" "$head_sha" "$state_json" "$meta_json" >"$PROMPT_FILE"
 
   claude_cmd=${PR_LOOP_CLAUDE_CMD:-claude -p --verbose --output-format stream-json --dangerously-skip-permissions}
   claude_filter=${PR_LOOP_CLAUDE_OUTPUT_FILTER:-$PR_LOOP_WORKER_DIR/claude-output-filter.sh}
@@ -150,7 +147,6 @@ run_claude_for_pr() {
   export PR_LOOP_STATE_FILE="$STATE_FILE"
   export PR_LOOP_LOCK_FILE="$LOCK_FILE"
   export PR_LOOP_WORKER_PID="$$"
-  export PR_LOOP_CONTEXT_FILE="$ctx_file"
   export PR_LOOP_REPO_ROOT="$(pwd -P)"
 
   log_info "starting Claude runner command=${claude_cmd} filter=$claude_filter prompt_file=$PROMPT_FILE"
@@ -271,7 +267,7 @@ process_pr() {
 
   gh_prepare_pr_workspace "$pr_number" "$meta_json"
   head_sha=$(printf '%s\n' "$meta_json" | jq -r '.headRefOid // ""')
-  run_claude_for_pr "$pr_number" "$current_stage" "$head_sha" "$state_json" "$CTX_FILE" "$meta_json"
+  run_claude_for_pr "$pr_number" "$current_stage" "$head_sha" "$state_json" "$meta_json"
   requested_stage=${CLAUDE_REQUESTED_STAGE:-$current_stage}
   next_stage=$(validate_stage_transition "$current_stage" "$requested_stage")
   log_info "stage decision current=$current_stage requested=$requested_stage next=$next_stage"

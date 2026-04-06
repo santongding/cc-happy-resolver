@@ -215,6 +215,48 @@ test_validate_stage_transition_rules() {
   assert_eq "review" "$(validate_stage_transition review nonsense 0)"
 }
 
+test_gh_api_with_retry_retries_transient_failures() {
+  local tmpdir attempts_file sleeps_file warns_file output
+  tmpdir=$(mktemp -d)
+  attempts_file="$tmpdir/attempts"
+  sleeps_file="$tmpdir/sleeps.log"
+  warns_file="$tmpdir/warns.log"
+
+  (
+    source "$ROOT_DIR/lib/gh.sh"
+    export TEST_ATTEMPTS_FILE="$attempts_file"
+    export TEST_SLEEPS_FILE="$sleeps_file"
+    export TEST_WARNS_FILE="$warns_file"
+    export PR_LOOP_GH_API_RETRY_MAX_ATTEMPTS=3
+    export PR_LOOP_GH_API_RETRY_DELAY_SECONDS=7
+
+    log_warn() { printf '%s\n' "$*" >>"$TEST_WARNS_FILE"; }
+    sleep() { printf '%s\n' "$1" >>"$TEST_SLEEPS_FILE"; }
+    gh() {
+      local count=0
+      [[ "$1" == "api" ]] || fail "expected gh api invocation"
+      if [[ -f "$TEST_ATTEMPTS_FILE" ]]; then
+        count=$(cat "$TEST_ATTEMPTS_FILE")
+      fi
+      count=$((count + 1))
+      printf '%s\n' "$count" >"$TEST_ATTEMPTS_FILE"
+      if (( count < 3 )); then
+        printf 'read tcp 198.18.0.1:12345->198.18.2.203:443: read: connection reset by peer\n' >&2
+        return 1
+      fi
+      printf '{"ok":true}\n'
+    }
+
+    output=$(gh_api_with_retry "repos/acme/demo/issues/31/comments?per_page=100")
+    assert_eq '{"ok":true}' "$output"
+  )
+
+  assert_eq "3" "$(cat "$attempts_file")"
+  assert_eq $'7\n7' "$(cat "$sleeps_file")"
+  assert_contains "gh api attempt 1/3 failed" "$(cat "$warns_file")"
+  assert_contains "gh api attempt 2/3 failed" "$(cat "$warns_file")"
+}
+
 test_build_claude_prompt_renders_standalone_template() {
   local prompt state_json meta_json
 
@@ -228,13 +270,12 @@ EOF
 )
 
   (
-    prompt=$(build_claude_prompt 42 review deadbeef "$state_json" /tmp/pr-42.ctx.json "$meta_json")
+    prompt=$(build_claude_prompt 42 review deadbeef "$state_json" "$meta_json")
     assert_contains "PR: 42" "$prompt"
     assert_contains "Title: Tighten worker prompt rendering" "$prompt"
     assert_contains "URL: https://example.invalid/pr/42" "$prompt"
     assert_contains "Stage: review" "$prompt"
     assert_contains "Head SHA: deadbeef" "$prompt"
-    assert_contains "Context JSON: /tmp/pr-42.ctx.json" "$prompt"
     assert_contains "Recent solved external comments: 12,34" "$prompt"
     assert_contains "Recent bot comments: 88,99,100" "$prompt"
     assert_contains "Hint: focus review follow-up" "$prompt"
@@ -419,7 +460,7 @@ test_run_claude_for_pr_streams_output_to_stdout() {
     STATE_FILE="$tmpdir/pr-42.state.json"
     export PR_LOOP_CLAUDE_CMD='printf "state=%s\n" "$PR_LOOP_STATE_FILE"; printf "runner-out\n"; printf "runner-err\n" >&2; printf "RESULT_STAGE=review\n"'
 
-    run_claude_for_pr 42 plan deadbeef '{}' "$tmpdir/context.json" '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
+    run_claude_for_pr 42 plan deadbeef '{}' '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
 
     assert_eq "review" "$CLAUDE_REQUESTED_STAGE"
     assert_contains "state=$tmpdir/pr-42.state.json" "$(cat "$stdout_file")"
@@ -460,7 +501,7 @@ EOF
     build_claude_prompt() { printf 'prompt\n'; }
     export PR_LOOP_CLAUDE_CMD="cat '$fixture'"
 
-    run_claude_for_pr 42 plan deadbeef '{}' "$tmpdir/context.json" '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
+    run_claude_for_pr 42 plan deadbeef '{}' '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
 
     assert_eq "review" "$CLAUDE_REQUESTED_STAGE"
   )
@@ -638,6 +679,7 @@ main() {
   run_test test_stage_marker_rendering_is_human_visible
   run_test test_snapshot_changes_when_review_reply_changes
   run_test test_validate_stage_transition_rules
+  run_test test_gh_api_with_retry_retries_transient_failures
   run_test test_build_claude_prompt_renders_standalone_template
   run_test test_claude_output_filter_formats_stream_json_human_readably
   run_test test_claude_output_filter_falls_back_to_command_when_description_missing
