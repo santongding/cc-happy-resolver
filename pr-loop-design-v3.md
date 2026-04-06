@@ -69,7 +69,8 @@
 
 ```text
 pr-loop/
-├── pr-loop.sh        # 主循环：扫 PR、派发 worker
+├── pr-loop.sh        # 主循环：先调 issue-scan，再扫 PR、派发 worker
+├── issue-scan.sh     # 扫 open issue；必要时创建 seed branch 和 PR
 ├── worker.sh         # 单个 PR 的完整处理流程
 ├── statectl.sh       # 给 claude code 调用：安全写入受限业务状态
 └── lib/
@@ -77,7 +78,7 @@ pr-loop/
     └── gh.sh         # 所有 Git/GitHub 相关操作
 ```
 
-总共 5 个 shell 文件，已经足够覆盖第一版实现。
+总共 6 个 shell 文件，已经足够覆盖第一版实现。
 
 ---
 
@@ -91,6 +92,7 @@ pr-loop/
 
 - 检查当前目录是否是 GitHub repo root
 - 初始化 repo 对应的状态目录
+- 每轮先调用 `issue-scan.sh` 扫描同 repo 的 open issues
 - 定期扫描所有 open PR
 - 对每个 PR 调用 `worker.sh`
 
@@ -99,6 +101,31 @@ pr-loop/
 - `main`
 - `loop_once`
 - `dispatch_pr`
+
+---
+
+## 4.1.1 `issue-scan.sh`
+
+issue 扫描入口，只负责“issue 是否需要先被提升为 seed PR”这件事。
+
+### 关键职责
+
+- 扫描当前 repo 的所有 open issues
+- 判断 issue 是否已经有关联的 open PR
+- 若无关联 PR，则创建 `cc-happy/issue-<id>` 分支
+- 新分支必须从 repo 默认分支切出，且除一个空的 `PLAN.md` 外与默认分支完全一致
+- 将该分支 push 到远端后创建 PR
+- 新创建 PR 的 title 和 body 必须直接复制自 issue 的 title 和 body
+
+### 关联规则
+
+- 首选关联信号：PR head branch 名精确等于 `cc-happy/issue-<id>`
+- 这个命名同时也是自动创建 seed PR 时必须使用的 branch 名
+
+### 建议关键函数
+
+- `main`
+- `scan_open_issues`
 
 ---
 
@@ -579,9 +606,10 @@ pr-123.ctx.json
 
 ```text
 while true
-  1. 扫描 open PR 列表（仅拉轻量元数据）
-  2. 逐个调用 worker.sh <pr_number>
-  3. sleep N 秒
+  1. 调用 issue-scan.sh，扫描 open issues，必要时补建 seed PR
+  2. 扫描 open PR 列表（仅拉轻量元数据）
+  3. 逐个调用 worker.sh <pr_number>
+  4. sleep N 秒
 done
 ```
 
@@ -757,7 +785,12 @@ review -> finished
 pr-loop.sh
   -> core.sh
   -> gh.sh
+  -> issue-scan.sh
   -> worker.sh
+
+issue-scan.sh
+  -> core.sh
+  -> gh.sh
 
 worker.sh
   -> core.sh
@@ -793,6 +826,7 @@ repo_state_dir
 ensure_repo_state_dir
 pr_state_file
 pr_lock_file
+issue_scan_lock_file
 load_state_json
 state_read_json
 state_write_json
@@ -805,6 +839,12 @@ now_utc
 
 ```bash
 gh_list_open_prs
+gh_list_open_issues
+gh_repo_default_branch
+gh_issue_branch_name
+gh_find_related_pr_number
+gh_seed_issue_branch
+gh_create_issue_pr
 gh_pr_meta
 gh_pr_is_open
 gh_collect_context
@@ -840,6 +880,13 @@ cleanup
 main
 loop_once
 dispatch_pr
+```
+
+## 14.6 `issue-scan.sh`
+
+```bash
+main
+scan_open_issues
 ```
 
 ---
@@ -953,4 +1000,3 @@ pr-loop.sh
 - 引入更强的 GraphQL 聚合查询
 
 都可以在这个结构上平滑演进，而不需要推翻重写。
-
