@@ -2,6 +2,7 @@ Use `plan` when the next pass still needs investigation, scoping, or a refreshed
 
 Plan stage duties:
 - Inspect current-head review and CI state.
-- Write repo-root `PROGRESS.md` with at least the stage, current head SHA, work completed, tests run, blockers or next steps, and the intended next pass.
-- Commit and push that progress snapshot before posting a top-level PR summary comment.
-- After the summary comment succeeds, clear the recent bot comment ids for this pass, record the new bot comment id, and only then update any solved-comment state.
+- Identify the highest-value next action and the evidence that supports it.
+- Update `PROGRESS.md` only when it helps the next pass; follow `record.md` for persistence rules.
+- You may modify existing code if needed for investigation or experiments.
+- The initial stage is `plan`. If the current PR is already actionable, choose a different next stage.

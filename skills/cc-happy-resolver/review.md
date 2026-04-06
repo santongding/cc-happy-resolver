@@ -2,10 +2,10 @@ Use `review` when the next pass should verify the current head, handle review fe
 
 Review stage duties:
 - Verify the current head, required checks, mergeability, and unresolved feedback.
-- Update the progress artifact with the review outcome.
-- Commit and push before posting the top-level PR summary comment and any needed review replies.
-- Record returned bot comment ids only after the comments exist on GitHub.
-- If you intend to move to `finished`, remove transient status artifacts such as `PROGRESS.md` from the branch head before the final push so repo-unrelated tracking files do not remain.
+- Update `PROGRESS.md` with the review outcome when the next pass needs that handoff; follow `record.md`.
+- Fix small remaining review issues directly when appropriate, and reply to the comments you actually addressed.
+- Trigger Codex review when there is no remaining actionable feedback on the current head or after you have resolved the existing review comments.
+
 
 Commands used mainly in review:
 - Trigger Codex review:

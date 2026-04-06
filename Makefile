@@ -27,6 +27,7 @@ install:
 	$(INSTALL) -m 0644 skills/cc-happy-resolver/finished.md "$(CLAUDE_SKILLDIR)/finished.md"
 	$(INSTALL) -m 0644 skills/cc-happy-resolver/next-stage.md "$(CLAUDE_SKILLDIR)/next-stage.md"
 	$(INSTALL) -m 0644 skills/cc-happy-resolver/exit.md "$(CLAUDE_SKILLDIR)/exit.md"
+	$(INSTALL) -m 0644 skills/cc-happy-resolver/record.md "$(CLAUDE_SKILLDIR)/record.md"
 	$(INSTALL) -m 0644 skills/cc-happy-resolver/post.md "$(CLAUDE_SKILLDIR)/post.md"
 	$(INSTALL) -m 0644 skills/cc-happy-resolver/gh-helper-commands.md "$(CLAUDE_SKILLDIR)/gh-helper-commands.md"
 	printf '%s\n' '#!/usr/bin/env bash' 'exec "$(LIBEXECDIR)/pr-loop.sh" "$$@"' >"$(BINDIR)/pr-loop"

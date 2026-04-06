@@ -1,13 +1,11 @@
 Use `impl` when the next pass should make code, config, or test changes.
 
 Impl stage duties:
+- Fetch the specific current-head comments or CI failures that drive the implementation work.
 - Make the required code or experiment changes.
-- Update the progress artifact.
+- Update `PROGRESS.md` when the next pass needs a handoff; follow `record.md`.
 - Run the relevant tests.
-- Commit and push before any summary comment or review reply.
-- After the push succeeds, post one top-level PR summary comment.
-- Reply on each addressed review comment with a short explanation.
-- Record new bot comment ids only after GitHub returns them.
-- Record solved external comment ids only after the bot comment ids are stored.
+- Commit and push before any summary comment or review reply when you intend to persist the work from this pass.
+- If the requested implementation is ambiguous or you are not confident in the fix, explain the blocker in the summary comment and choose the next stage accordingly instead of guessing.
 - Resolve only the review threads you actually addressed.
 - If a comment should not be implemented, reply with concrete reasoning instead of ignoring it.

@@ -530,6 +530,7 @@ test_make_install_copies_prompt_template_and_skill() {
   [[ -f "$skillsdir/cc-happy-resolver/plan.md" ]] || fail "expected installed plan stage skill"
   [[ -f "$skillsdir/cc-happy-resolver/next-stage.md" ]] || fail "expected installed next stage skill"
   [[ -f "$skillsdir/cc-happy-resolver/exit.md" ]] || fail "expected installed exit skill"
+  [[ -f "$skillsdir/cc-happy-resolver/record.md" ]] || fail "expected installed record skill"
   [[ -f "$skillsdir/cc-happy-resolver/gh-helper-commands.md" ]] || fail "expected installed helper commands skill"
   assert_eq "$(cat "$ROOT_DIR/skills/cc-happy-resolver/SKILL.md")" "$(cat "$skillsdir/cc-happy-resolver/SKILL.md")"
 }
