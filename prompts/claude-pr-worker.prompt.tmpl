@@ -123,13 +123,15 @@ Helper Commands:
 - Touch state without changing other fields:
   __WORKER_DIR__/statectl.sh mark-updated
 
-- Only require code review when in review stage. 
+- Only require code review when in review stage.
 
-Allowed stage transitions:
-- plan -> impl
-- impl -> review
-- review -> finished
-- otherwise keep the current stage
+Stage selection:
+- You may keep the current stage, move to any other stage, skip ahead, or move backward if the PR state warrants it.
+- Choose the next stage Ralph should run, not just the label for the work you finished in this pass.
+- Use `plan` when the next pass still needs investigation, scoping, or a refreshed action plan.
+- Use `impl` when the next pass should make code, config, or test changes.
+- Use `review` when the next pass should verify the current head, handle review feedback, or confirm merge readiness.
+- Use `finished` only when the finished criteria above are satisfied.
 
 Final line must be exactly one of:
 RESULT_STAGE=plan

@@ -204,8 +204,11 @@ EOF
 
 test_validate_stage_transition_rules() {
   assert_eq "impl" "$(validate_stage_transition plan impl 0)"
-  assert_eq "plan" "$(validate_stage_transition plan review 0)"
-  assert_eq "impl" "$(validate_stage_transition impl review 1)"
+  assert_eq "review" "$(validate_stage_transition plan review 0)"
+  assert_eq "plan" "$(validate_stage_transition review plan 0)"
+  assert_eq "finished" "$(validate_stage_transition plan finished 0)"
+  assert_eq "review" "$(validate_stage_transition impl review 1)"
+  assert_eq "review" "$(validate_stage_transition review nonsense 0)"
 }
 
 test_build_claude_prompt_renders_standalone_template() {
@@ -243,6 +246,8 @@ EOF
     assert_contains "$ROOT_DIR/statectl.sh add-bot-comment \"\$SUMMARY_ID\"" "$prompt"
     assert_contains 'gh pr view 42 --repo "$REPO" --json headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup' "$prompt"
     assert_contains "git push origin HEAD:feature/prompt-template before posting summary comments or emitting a stage result." "$prompt"
+    assert_contains "You may keep the current stage, move to any other stage, skip ahead, or move backward if the PR state warrants it." "$prompt"
+    assert_contains 'Use `finished` only when the finished criteria above are satisfied.' "$prompt"
     assert_contains "RESULT_STAGE=finished" "$prompt"
   )
 }
@@ -603,8 +608,6 @@ EOF
       export TEST_COLLECT_PHASE=post
       return 0
     }
-    git_worktree_dirty() { return 1; }
-
     process_pr 7
     assert_eq "impl" "$TEST_POSTED_STAGE"
   )

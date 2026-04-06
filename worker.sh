@@ -199,34 +199,29 @@ run_claude_for_pr() {
 validate_stage_transition() {
   local current_stage=$1
   local requested_stage=$2
-  local dirty_flag=${3:-0}
+
+  case "$requested_stage" in
+    plan|impl|review|finished)
+      ;;
+    *)
+      log_warn "invalid requested stage $requested_stage; keeping current stage"
+      printf '%s\n' "$current_stage"
+      return 0
+      ;;
+  esac
 
   if [[ "$current_stage" == "$requested_stage" ]]; then
     printf '%s\n' "$current_stage"
     return 0
   fi
 
-  if [[ "$dirty_flag" == "1" ]]; then
-    log_warn "worktree is dirty after Claude run; refusing to advance stage"
-    printf '%s\n' "$current_stage"
-    return 0
-  fi
-
-  case "$current_stage:$requested_stage" in
-    plan:impl|impl:review|review:finished)
-      printf '%s\n' "$requested_stage"
-      ;;
-    *)
-      log_warn "invalid stage transition $current_stage -> $requested_stage; keeping current stage"
-      printf '%s\n' "$current_stage"
-      ;;
-  esac
+  printf '%s\n' "$requested_stage"
 }
 
 process_pr() {
   local pr_number=$1
   local state_json meta_json current_stage pre_snapshot last_snapshot head_sha
-  local requested_stage next_stage dirty_flag github_changed=0
+  local requested_stage next_stage github_changed=0
   local refreshed_meta_json refreshed_ctx_json final_snapshot final_meta_json
 
   export PR_LOOP_LOG_PR="$pr_number"
@@ -278,15 +273,7 @@ process_pr() {
   head_sha=$(printf '%s\n' "$meta_json" | jq -r '.headRefOid // ""')
   run_claude_for_pr "$pr_number" "$current_stage" "$head_sha" "$state_json" "$CTX_FILE" "$meta_json"
   requested_stage=${CLAUDE_REQUESTED_STAGE:-$current_stage}
-
-  dirty_flag=0
-  if git_worktree_dirty; then
-    dirty_flag=1
-    log_warn "git worktree is dirty after Claude run"
-  else
-    log_info "git worktree is clean after Claude run"
-  fi
-  next_stage=$(validate_stage_transition "$current_stage" "$requested_stage" "$dirty_flag")
+  next_stage=$(validate_stage_transition "$current_stage" "$requested_stage")
   log_info "stage decision current=$current_stage requested=$requested_stage next=$next_stage"
 
   if [[ "$next_stage" != "$current_stage" ]]; then
