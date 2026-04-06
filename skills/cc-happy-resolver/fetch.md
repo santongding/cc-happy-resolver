@@ -7,6 +7,35 @@ Shared setup for every stage:
 - Use the provided context JSON path, recent solved external comment ids, recent bot comment ids, and hint to avoid repeating work and duplicate comments.
 - Use the prompt-provided `statectl.sh` path for all state updates. Do not hard-code a different path.
 
+Useful commands while gathering current-head state:
+- Inspect CI for the PR head:
+`gh pr checks <pr-number> --repo "$REPO"`
+`gh run list --repo "$REPO" --commit "$HEAD_SHA" --json databaseId,name,conclusion,event`
+`gh run view "$RUN_ID" --repo "$REPO" --log-failed`
+- Query unresolved review threads with GraphQL:
+`gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -F pr="<pr-number>" -f query='
+  query($owner: String!, $name: String!, $pr: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $pr) {
+        reviewThreads(first: 100) {
+          nodes {
+            id
+            isResolved
+            comments(first: 20) {
+              nodes {
+                databaseId
+                body
+              }
+            }
+          }
+        }
+      }
+    }
+  }'`
+- Get review comments for a specific current-head review when needed:
+`REVIEW_ID=$(echo "$CURRENT_HEAD_REVIEW" | jq -r '.id')`
+`gh api repos/$REPO/pulls/<pr-number>/reviews/$REVIEW_ID/comments`
+
 Worker contract:
 - `worker.sh` owns workspace preparation, reruns, and legal stage transitions. You own exactly one pass and must not sleep or wait.
 - The worker resets and cleans the git worktree before each run. Unpushed local changes will be lost on the next run.

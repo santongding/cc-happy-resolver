@@ -7,6 +7,26 @@ Comment and persistence rules:
 - If you change code or the progress artifact, you must `git add`, `git commit`, and run the prompt-provided push command before posting summary comments or emitting a stage result.
 - If push fails or the worktree remains dirty, keep the current stage.
 
+Commands for posting and state updates:
+- Post the top-level PR summary comment and capture the new comment id:
+`SUMMARY_ID=$(gh api repos/$REPO/issues/<pr-number>/comments -f body="[pr-loop-bot] <summary>" --jq '.id')`
+- Reply to a review comment:
+`REPLY_ID=$(gh api repos/$REPO/pulls/<pr-number>/comments/$COMMENT_ID/replies --field body="[pr-loop-bot] <response>" --jq '.id')`
+- Clear per-pass bot comment ids before recording new ones:
+`<statectl-path> clear-recent-bot-comments`
+- Record the new top-level bot summary comment id after the comment exists:
+`<statectl-path> add-bot-comment "$SUMMARY_ID"`
+- Record the new bot review reply id after the reply exists:
+`<statectl-path> add-bot-comment "$REPLY_ID"`
+- Record addressed external review comments after bot comments are already recorded:
+`<statectl-path> add-solved-comment <id>`
+- Update the next-pass hint when useful:
+`<statectl-path> set-hint "..."`
+- Record the processed head sha if needed:
+`<statectl-path> set-last-head-sha <sha>`
+- Touch state without changing other fields:
+`<statectl-path> mark-updated`
+
 Required action order for every pass:
 1. Commit and push the current pass.
 2. Post the top-level PR summary comment.
