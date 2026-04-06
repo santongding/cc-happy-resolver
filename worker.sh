@@ -4,6 +4,7 @@ set -euo pipefail
 PR_LOOP_WORKER_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$PR_LOOP_WORKER_DIR/lib/core.sh"
 source "$PR_LOOP_WORKER_DIR/lib/gh.sh"
+PR_LOOP_CLAUDE_PROMPT_TEMPLATE="${PR_LOOP_CLAUDE_PROMPT_TEMPLATE:-$PR_LOOP_WORKER_DIR/prompts/claude-pr-worker.prompt.tmpl}"
 
 PR_LOOP_LOG_MODULE=worker
 
@@ -87,6 +88,7 @@ build_claude_prompt() {
   local ctx_file=$5
   local meta_json=$6
   local solved_comments solved_subcomments hint title url push_remote push_ref
+  local template_file prompt state_file
 
   solved_comments=$(printf '%s\n' "$state_json" | jq -r '[.last_solved_comments[]? | tostring] | join(",")')
   solved_subcomments=$(printf '%s\n' "$state_json" | jq -r '[.last_solved_subcomments[]? | tostring] | join(",")')
@@ -96,45 +98,26 @@ build_claude_prompt() {
   push_remote=${PR_LOOP_PUSH_REMOTE:-origin}
   push_ref=${PR_LOOP_PUSH_REF:-$(printf '%s\n' "$meta_json" | jq -r '.headRefName // ""')}
 
-  cat <<EOF
-PR: $pr_number
-Title: $title
-URL: $url
-Stage: $stage
-Head SHA: $head_sha
-Context JSON: $ctx_file
+  template_file=$PR_LOOP_CLAUDE_PROMPT_TEMPLATE
+  [[ -f "$template_file" ]] || die "missing prompt template: $template_file"
+  state_file=${STATE_FILE:-$(pr_state_file "$pr_number")}
 
-Last solved comments: ${solved_comments:-<none>}
-Last solved subcomments: ${solved_subcomments:-<none>}
-Hint: ${hint:-<none>}
+  prompt=$(<"$template_file")
+  prompt=${prompt//__PR_NUMBER__/$pr_number}
+  prompt=${prompt//__TITLE__/$title}
+  prompt=${prompt//__URL__/$url}
+  prompt=${prompt//__STAGE__/$stage}
+  prompt=${prompt//__HEAD_SHA__/$head_sha}
+  prompt=${prompt//__CONTEXT_JSON__/$ctx_file}
+  prompt=${prompt//__LAST_SOLVED_COMMENTS__/${solved_comments:-<none>}}
+  prompt=${prompt//__LAST_SOLVED_SUBCOMMENTS__/${solved_subcomments:-<none>}}
+  prompt=${prompt//__HINT__/${hint:-<none>}}
+  prompt=${prompt//__PUSH_REMOTE__/$push_remote}
+  prompt=${prompt//__PUSH_REF__/$push_ref}
+  prompt=${prompt//__WORKER_DIR__/$PR_LOOP_WORKER_DIR}
+  prompt=${prompt//__STATE_FILE__/$state_file}
 
-Important workspace rule:
-- This worker resets and cleans the git worktree before each run.
-- If you change code, you must git add, git commit, and git push $push_remote HEAD:$push_ref before finishing.
-- Unpushed local changes will be lost on the next run.
-
-Bot comment prefix rule:
-- Any machine-written business comment must start with: [pr-loop-bot]
-
-Allowed stage transitions:
-- plan -> impl
-- impl -> review
-- review -> finished
-- otherwise keep the current stage
-
-Available commands:
-- $PR_LOOP_WORKER_DIR/statectl.sh set-hint "..."
-- $PR_LOOP_WORKER_DIR/statectl.sh add-solved-comment <id>
-- $PR_LOOP_WORKER_DIR/statectl.sh add-solved-subcomment <id>
-- $PR_LOOP_WORKER_DIR/statectl.sh set-last-head-sha <sha>
-- $PR_LOOP_WORKER_DIR/statectl.sh mark-updated
-
-Final line must be exactly one of:
-RESULT_STAGE=plan
-RESULT_STAGE=impl
-RESULT_STAGE=review
-RESULT_STAGE=finished
-EOF
+  printf '%s\n' "$prompt"
 }
 
 run_claude_for_pr() {
@@ -144,14 +127,13 @@ run_claude_for_pr() {
   local state_json=$4
   local ctx_file=$5
   local meta_json=$6
-  local prompt claude_cmd exit_code result_line
+  local claude_cmd exit_code result_line
 
   PROMPT_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-loop.prompt.XXXXXX")
   CLAUDE_STDOUT_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stdout.XXXXXX")
   CLAUDE_STDERR_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stderr.XXXXXX")
 
-  prompt=$(build_claude_prompt "$pr_number" "$stage" "$head_sha" "$state_json" "$ctx_file" "$meta_json")
-  printf '%s\n' "$prompt" >"$PROMPT_FILE"
+  build_claude_prompt "$pr_number" "$stage" "$head_sha" "$state_json" "$ctx_file" "$meta_json" >"$PROMPT_FILE"
 
   claude_cmd=${PR_LOOP_CLAUDE_CMD:-claude -p}
   export PR_LOOP_PR_NUMBER="$pr_number"

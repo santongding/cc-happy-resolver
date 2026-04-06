@@ -27,6 +27,12 @@ assert_ne() {
   [[ "$left" != "$right" ]] || fail "did not expect [$left]"
 }
 
+assert_contains() {
+  local needle=$1
+  local haystack=$2
+  [[ "$haystack" == *"$needle"* ]] || fail "expected to find [$needle]"
+}
+
 run_test() {
   local name=$1
   local status
@@ -157,6 +163,41 @@ test_validate_stage_transition_rules() {
   assert_eq "impl" "$(validate_stage_transition plan impl 0)"
   assert_eq "plan" "$(validate_stage_transition plan review 0)"
   assert_eq "impl" "$(validate_stage_transition impl review 1)"
+}
+
+test_build_claude_prompt_renders_standalone_template() {
+  local prompt state_json meta_json
+
+  state_json=$(cat <<'EOF'
+{"last_solved_comments":[12,34],"last_solved_subcomments":[],"hint":"focus review follow-up"}
+EOF
+)
+  meta_json=$(cat <<'EOF'
+{"title":"Tighten worker prompt rendering","htmlUrl":"https://example.invalid/pr/42","headRefName":"feature/prompt-template"}
+EOF
+)
+
+  (
+    STATE_FILE=/tmp/pr-42.state.json
+    prompt=$(build_claude_prompt 42 review deadbeef "$state_json" /tmp/pr-42.ctx.json "$meta_json")
+    assert_contains "PR: 42" "$prompt"
+    assert_contains "Title: Tighten worker prompt rendering" "$prompt"
+    assert_contains "URL: https://example.invalid/pr/42" "$prompt"
+    assert_contains "Stage: review" "$prompt"
+    assert_contains "Head SHA: deadbeef" "$prompt"
+    assert_contains "Context JSON: /tmp/pr-42.ctx.json" "$prompt"
+    assert_contains "State File: /tmp/pr-42.state.json" "$prompt"
+    assert_contains "Last solved comments: 12,34" "$prompt"
+    assert_contains "Last solved subcomments: <none>" "$prompt"
+    assert_contains "Hint: focus review follow-up" "$prompt"
+    assert_contains "Continuously resolve GitHub PR #42 by driving the Codex review cycle." "$prompt"
+    assert_contains "Persistent state lives in /tmp/pr-42.state.json." "$prompt"
+    assert_contains '{"pr_num":"42","repo":null,"last_seen_head_sha":null,"last_review_id":null,"pending_review_thread_ids":[],"failing_checks":[],"last_action":null,"completion":null}' "$prompt"
+    assert_contains 'gh pr checkout 42 --repo "$REPO"' "$prompt"
+    assert_contains 'gh pr view 42 --repo "$REPO" --json headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup' "$prompt"
+    assert_contains "git push origin HEAD:feature/prompt-template before finishing." "$prompt"
+    assert_contains "RESULT_STAGE=finished" "$prompt"
+  )
 }
 
 test_entrypoint_script_dirs_are_isolated_from_libs() {
@@ -345,6 +386,7 @@ main() {
   run_test test_stage_parsing_uses_only_strict_markers
   run_test test_snapshot_changes_when_review_reply_changes
   run_test test_validate_stage_transition_rules
+  run_test test_build_claude_prompt_renders_standalone_template
   run_test test_entrypoint_script_dirs_are_isolated_from_libs
   run_test test_find_related_pr_number_matches_branch_or_issue_reference
   run_test test_seed_issue_branch_creates_plan_branch_from_default
