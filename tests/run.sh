@@ -238,20 +238,11 @@ EOF
     assert_contains "Recent solved external comments: 12,34" "$prompt"
     assert_contains "Recent bot comments: 88,99,100" "$prompt"
     assert_contains "Hint: focus review follow-up" "$prompt"
-    assert_contains "Continuously resolve GitHub PR #42." "$prompt"
-    assert_contains "Stage Playbook:" "$prompt"
-    assert_contains "Outer Worker Contract:" "$prompt"
-    assert_contains "Persistence by Commit:" "$prompt"
-    assert_contains "Helper Commands:" "$prompt"
-    assert_contains "The default transient status artifact is repo-root PROGRESS.md." "$prompt"
-    assert_contains "Commit and push the current pass." "$prompt"
-    assert_contains "SUMMARY_ID=\$(gh api repos/\$REPO/issues/42/comments -f body=\"[pr-loop-bot] <summary>\" --jq '.id')" "$prompt"
-    assert_contains "$ROOT_DIR/statectl.sh clear-recent-bot-comments" "$prompt"
-    assert_contains "$ROOT_DIR/statectl.sh add-bot-comment \"\$SUMMARY_ID\"" "$prompt"
-    assert_contains 'gh pr view 42 --repo "$REPO" --json headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup' "$prompt"
-    assert_contains "git push origin HEAD:feature/prompt-template before posting summary comments or emitting a stage result." "$prompt"
-    assert_contains "You may keep the current stage, move to any other stage, skip ahead, or move backward if the PR state warrants it." "$prompt"
-    assert_contains 'Use `finished` only when the finished criteria above are satisfied.' "$prompt"
+    assert_contains 'Use the installed Claude skill `cc-happy-resolver`.' "$prompt"
+    assert_contains "$ROOT_DIR/statectl.sh" "$prompt"
+    assert_contains 'Use the prompt data above and the current context JSON to avoid duplicate work and duplicate comments.' "$prompt"
+    assert_contains 'git push origin HEAD:feature/prompt-template' "$prompt"
+    assert_contains 'Only require code review when in `review` stage.' "$prompt"
     assert_contains "RESULT_STAGE=finished" "$prompt"
   )
 }
@@ -526,17 +517,23 @@ EOF
   assert_eq $'seed:1:main\npr:1:First issue:Issue body for PR 1:main' "$(cat "$actions_file")"
 }
 
-test_make_install_copies_prompt_template() {
-  local tmpdir prefix
+test_make_install_copies_prompt_template_and_skill() {
+  local tmpdir prefix skillsdir
   tmpdir=$(mktemp -d)
   prefix="$tmpdir/prefix"
+  skillsdir="$tmpdir/claude-skills"
 
-  make -C "$ROOT_DIR" install PREFIX="$prefix" >/dev/null
+  make -C "$ROOT_DIR" install PREFIX="$prefix" CLAUDE_SKILLSDIR="$skillsdir" >/dev/null
 
   [[ -x "$prefix/bin/pr-loop" ]] || fail "expected installed launcher at $prefix/bin/pr-loop"
   [[ -x "$prefix/lib/pr-loop/claude-output-filter.sh" ]] || fail "expected installed Claude output filter"
   [[ -f "$prefix/lib/pr-loop/prompts/claude-pr-worker.prompt.tmpl" ]] || fail "expected installed prompt template"
   assert_eq "$(cat "$ROOT_DIR/prompts/claude-pr-worker.prompt.tmpl")" "$(cat "$prefix/lib/pr-loop/prompts/claude-pr-worker.prompt.tmpl")"
+  [[ -f "$skillsdir/cc-happy-resolver/SKILL.md" ]] || fail "expected installed Claude skill"
+  [[ -f "$skillsdir/cc-happy-resolver/plan.md" ]] || fail "expected installed plan stage skill"
+  [[ -f "$skillsdir/cc-happy-resolver/next-stage.md" ]] || fail "expected installed next stage skill"
+  [[ -f "$skillsdir/cc-happy-resolver/gh-helper-commands.md" ]] || fail "expected installed helper commands skill"
+  assert_eq "$(cat "$ROOT_DIR/skills/cc-happy-resolver/SKILL.md")" "$(cat "$skillsdir/cc-happy-resolver/SKILL.md")"
 }
 
 test_process_pr_reloads_state_and_recomputes_snapshot() {
@@ -653,7 +650,7 @@ main() {
   run_test test_run_claude_for_pr_streams_output_to_stdout
   run_test test_run_claude_for_pr_filters_stream_json_output
   run_test test_scan_open_issues_creates_missing_prs_only
-  run_test test_make_install_copies_prompt_template
+  run_test test_make_install_copies_prompt_template_and_skill
   run_test test_process_pr_reloads_state_and_recomputes_snapshot
 
   printf '\nPassed: %d\nFailed: %d\n' "$pass_count" "$fail_count"
