@@ -231,7 +231,7 @@ EOF
     assert_contains "Recent solved external comments: 12,34" "$prompt"
     assert_contains "Recent bot comments: 88,99,100" "$prompt"
     assert_contains "Hint: focus review follow-up" "$prompt"
-    assert_contains "Continuously resolve GitHub PR #42 by driving the Codex review cycle." "$prompt"
+    assert_contains "Continuously resolve GitHub PR #42." "$prompt"
     assert_contains "Stage Playbook:" "$prompt"
     assert_contains "Outer Worker Contract:" "$prompt"
     assert_contains "Persistence by Commit:" "$prompt"
@@ -279,6 +279,23 @@ EOF
   assert_not_contains 'Error: Applied the fix.' "$output"
   assert_not_contains '"type":"system"' "$output"
   assert_not_contains '"type":"content_block_delta"' "$output"
+}
+
+test_claude_output_filter_falls_back_to_command_when_description_missing() {
+  local tmpdir fixture output
+  tmpdir=$(mktemp -d)
+  fixture="$tmpdir/claude-stream.jsonl"
+
+  cat >"$fixture" <<'EOF'
+{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}}
+{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"gh pr checkout 24 --repo santongding/polytrader 2>&1\"}"}}
+{"type":"content_block_stop","index":0}
+EOF
+
+  output=$("$ROOT_DIR/claude-output-filter.sh" <"$fixture")
+
+  assert_contains 'Tool call: Bash - gh pr checkout 24 --repo santongding/polytrader 2>&1' "$output"
+  assert_not_contains 'Input:' "$output"
 }
 
 test_entrypoint_script_dirs_are_isolated_from_libs() {
@@ -402,11 +419,13 @@ test_run_claude_for_pr_streams_output_to_stdout() {
     log_info() { :; }
     log_warn() { :; }
     build_claude_prompt() { printf 'prompt\n'; }
-    export PR_LOOP_CLAUDE_CMD='printf "runner-out\n"; printf "runner-err\n" >&2; printf "RESULT_STAGE=review\n"'
+    STATE_FILE="$tmpdir/pr-42.state.json"
+    export PR_LOOP_CLAUDE_CMD='printf "state=%s\n" "$PR_LOOP_STATE_FILE"; printf "runner-out\n"; printf "runner-err\n" >&2; printf "RESULT_STAGE=review\n"'
 
     run_claude_for_pr 42 plan deadbeef '{}' "$tmpdir/context.json" '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
 
     assert_eq "review" "$CLAUDE_REQUESTED_STAGE"
+    assert_contains "state=$tmpdir/pr-42.state.json" "$(cat "$stdout_file")"
     assert_contains "runner-out" "$(cat "$stdout_file")"
     assert_contains "runner-err" "$(cat "$stdout_file")"
     assert_contains "RESULT_STAGE=review" "$(cat "$stdout_file")"
@@ -617,6 +636,7 @@ main() {
   run_test test_validate_stage_transition_rules
   run_test test_build_claude_prompt_renders_standalone_template
   run_test test_claude_output_filter_formats_stream_json_human_readably
+  run_test test_claude_output_filter_falls_back_to_command_when_description_missing
   run_test test_entrypoint_script_dirs_are_isolated_from_libs
   run_test test_find_related_pr_number_matches_branch_or_issue_reference
   run_test test_seed_issue_branch_creates_plan_branch_from_default

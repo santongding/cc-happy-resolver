@@ -147,6 +147,7 @@ run_claude_for_pr() {
   [[ -x "$claude_filter" ]] || die "missing Claude output filter: $claude_filter"
   CLAUDE_REQUESTED_STAGE=$stage
   export PR_LOOP_PR_NUMBER="$pr_number"
+  export PR_LOOP_STATE_FILE="$STATE_FILE"
   export PR_LOOP_LOCK_FILE="$LOCK_FILE"
   export PR_LOOP_WORKER_PID="$$"
   export PR_LOOP_CONTEXT_FILE="$ctx_file"

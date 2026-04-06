@@ -72,19 +72,41 @@ print_pretty_json() {
   fi
 }
 
+extract_json_string_field() {
+  local payload=$1
+  local field=$2
+  local escaped=
+
+  if [[ -n "$payload" ]] && printf '%s\n' "$payload" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    printf '%s\n' "$payload" | jq -r --arg field "$field" '.[$field] // empty'
+    return 0
+  fi
+
+  if [[ "$payload" =~ \"${field}\"[[:space:]]*:[[:space:]]*\"(([^\"\\]|\\.)*)\" ]]; then
+    escaped=${BASH_REMATCH[1]}
+    printf '"%s"\n' "$escaped" | jq -r .
+    return 0
+  fi
+
+  printf '\n'
+}
+
 emit_tool_call() {
   local name=$1
   local input_payload=${2:-}
   local description=
+  local command=
+  local detail=
 
   finish_text_block
 
-  if [[ -n "$input_payload" ]] && printf '%s\n' "$input_payload" | jq -e 'type == "object"' >/dev/null 2>&1; then
-    description=$(printf '%s\n' "$input_payload" | jq -r '.description // empty')
-  fi
+  description=$(extract_json_string_field "$input_payload" description)
+  command=$(extract_json_string_field "$input_payload" command)
+  detail=${description:-}
+  [[ -n "$detail" ]] || detail=${command:-}
 
-  if [[ -n "$description" ]]; then
-    printf 'Tool call: %s - %s\n' "${name:-<unknown>}" "$description"
+  if [[ -n "$detail" ]]; then
+    printf 'Tool call: %s - %s\n' "${name:-<unknown>}" "$detail"
   else
     printf 'Tool call: %s\n' "${name:-<unknown>}"
   fi
