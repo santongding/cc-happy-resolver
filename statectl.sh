@@ -107,6 +107,33 @@ cmd_mark_updated() {
   write_state_json "$(load_state_json "$PR_LOOP_STATE_FILE" | jq -c --arg updated_at "$(now_utc)" '.updated_at = $updated_at')"
 }
 
+cmd_set_next_stage() {
+  local stage=$1
+
+  case "$stage" in
+    plan|impl|review|finished)
+      ;;
+    *)
+      die "next stage must be one of: plan, impl, review, finished"
+      return 1
+      ;;
+  esac
+
+  log_info "recording next stage=$stage"
+  write_state_json "$(load_state_json "$PR_LOOP_STATE_FILE" | jq -c --arg stage "$stage" --arg updated_at "$(now_utc)" '
+    .next_stage = $stage
+    | .updated_at = $updated_at
+  ')"
+}
+
+cmd_clear_next_stage() {
+  log_info "clearing pending next stage"
+  write_state_json "$(load_state_json "$PR_LOOP_STATE_FILE" | jq -c --arg updated_at "$(now_utc)" '
+    .next_stage = ""
+    | .updated_at = $updated_at
+  ')"
+}
+
 main() {
   require_cmd jq sed tr
   require_lock_context
@@ -142,6 +169,12 @@ main() {
       ;;
     mark-updated)
       cmd_mark_updated
+      ;;
+    set-next-stage)
+      cmd_set_next_stage "${1:-}"
+      ;;
+    clear-next-stage)
+      cmd_clear_next_stage
       ;;
     *)
       die "unknown command: ${subcommand:-<empty>}"

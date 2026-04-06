@@ -17,6 +17,10 @@ CLAUDE_STDOUT_FILE=
 CLAUDE_STDERR_FILE=
 CLAUDE_REQUESTED_STAGE=
 
+read_requested_stage_from_state() {
+  state_read_json "$STATE_FILE" '.next_stage // ""' ""
+}
+
 cleanup() {
   local status=$?
 
@@ -125,7 +129,7 @@ run_claude_for_pr() {
   local state_json=$4
   local meta_json=$5
   local claude_cmd claude_filter exit_code filter_exit
-  local result_line raw_stdout_pipe stdout_pipe stderr_pipe
+  local requested_stage raw_stdout_pipe stdout_pipe stderr_pipe
   local stdout_tee_pid stderr_tee_pid filter_pid stdout_tee_exit stderr_tee_exit
 
   PROMPT_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-loop.prompt.XXXXXX")
@@ -148,6 +152,7 @@ run_claude_for_pr() {
   export PR_LOOP_LOCK_FILE="$LOCK_FILE"
   export PR_LOOP_WORKER_PID="$$"
   export PR_LOOP_REPO_ROOT="$(pwd -P)"
+  "$PR_LOOP_WORKER_DIR/statectl.sh" clear-next-stage >/dev/null 2>&1
 
   log_info "starting Claude runner command=${claude_cmd} filter=$claude_filter prompt_file=$PROMPT_FILE"
 
@@ -177,19 +182,20 @@ run_claude_for_pr() {
     log_warn "tee exited unexpectedly stdout=$stdout_tee_exit stderr=$stderr_tee_exit"
   fi
 
-  result_line=$(awk 'NF { line = $0 } END { print line }' "$CLAUDE_STDOUT_FILE")
   if [[ $exit_code -ne 0 ]]; then
     log_warn "Claude runner exited with status $exit_code"
   fi
 
-  if [[ "$result_line" =~ ^RESULT_STAGE=(plan|impl|review|finished)$ ]]; then
-    log_info "Claude requested stage ${BASH_REMATCH[1]}"
-    CLAUDE_REQUESTED_STAGE=${BASH_REMATCH[1]}
-    return 0
+  requested_stage=$(read_requested_stage_from_state)
+  if [[ "$requested_stage" =~ ^(plan|impl|review|finished)$ ]]; then
+    log_info "Claude requested stage $requested_stage via statectl"
+    CLAUDE_REQUESTED_STAGE=$requested_stage
+  else
+    log_warn "Claude did not record a valid next stage via statectl; keeping current stage"
+    CLAUDE_REQUESTED_STAGE=$stage
   fi
 
-  log_warn "Claude did not emit a valid RESULT_STAGE line; keeping current stage"
-  CLAUDE_REQUESTED_STAGE=$stage
+  "$PR_LOOP_WORKER_DIR/statectl.sh" clear-next-stage >/dev/null 2>&1
 }
 
 validate_stage_transition() {

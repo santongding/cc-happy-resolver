@@ -122,7 +122,7 @@ issue_scan_lock_file() {
 
 default_state_json() {
   cat <<'EOF'
-{"hint":"","last_head_sha":"","last_pr_updated_at":"","last_snapshot":"","last_solved_comment_ids":[],"recent_bot_comment_ids":[],"updated_at":""}
+{"hint":"","last_head_sha":"","last_pr_updated_at":"","last_snapshot":"","last_solved_comment_ids":[],"next_stage":"","recent_bot_comment_ids":[],"updated_at":""}
 EOF
 }
 
@@ -149,6 +149,7 @@ load_state_json() {
         + (.recent_bot_review_reply_ids // []))
         | unique
       )
+      | .next_stage = (.next_stage // "")
       | del(
           .last_solved_comments,
           .last_solved_subcomments,

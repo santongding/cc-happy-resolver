@@ -9,5 +9,5 @@ Before changing the next stage to `finished`:
 - Make sure the branch head is committed, pushed, and clean after that cleanup.
 - If any finished criterion is false, do not move to `finished`.
 
-If and only if all finished criteria are satisfied, end with exactly:
-`RESULT_STAGE=finished`
+If and only if all finished criteria are satisfied, record the next stage with:
+`<statectl-path> set-next-stage finished`

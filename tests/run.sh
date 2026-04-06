@@ -107,6 +107,27 @@ test_statectl_updates_are_sanitized_and_scoped() {
   assert_eq "[5,9]" "$(printf '%s\n' "$state_json" | jq -c '.last_solved_comment_ids')"
 }
 
+test_statectl_tracks_next_stage() {
+  local tmpdir state_file lock_file state_json
+  tmpdir=$(mktemp -d)
+  state_file="$tmpdir/pr-next-stage.state.json"
+  lock_file="$tmpdir/pr-next-stage.lock"
+  printf '%s\n' "$$" >"$lock_file"
+  state_write_json "$state_file" "$(default_state_json)"
+
+  (
+    export PR_LOOP_STATE_FILE="$state_file"
+    export PR_LOOP_LOCK_FILE="$lock_file"
+    export PR_LOOP_WORKER_PID="$$"
+    "$ROOT_DIR/statectl.sh" set-next-stage review
+    "$ROOT_DIR/statectl.sh" clear-next-stage
+    "$ROOT_DIR/statectl.sh" set-next-stage finished
+  )
+
+  state_json=$(load_state_json "$state_file")
+  assert_eq "finished" "$(printf '%s\n' "$state_json" | jq -r '.next_stage')"
+}
+
 test_statectl_tracks_recent_bot_comment_ids() {
   local tmpdir state_file lock_file state_json
   tmpdir=$(mktemp -d)
@@ -282,6 +303,10 @@ EOF
     assert_contains "Statectl Path: $ROOT_DIR/statectl.sh" "$prompt"
     assert_contains "Push Command: git push origin HEAD:feature/prompt-template" "$prompt"
     assert_contains 'Use the installed Claude skill `cc-happy-resolver`.' "$prompt"
+    assert_contains "Final output contract:" "$prompt"
+    assert_contains "Do not use terminal output to report the next stage" "$prompt"
+    assert_contains "Record the next stage with: $ROOT_DIR/statectl.sh set-next-stage <plan|impl|review|finished>" "$prompt"
+    assert_contains "Call set-next-stage only at the very end of the pass, after all other statectl updates and after the branch/PR state is final" "$prompt"
   )
 }
 
@@ -458,7 +483,10 @@ test_run_claude_for_pr_streams_output_to_stdout() {
     log_warn() { :; }
     build_claude_prompt() { printf 'prompt\n'; }
     STATE_FILE="$tmpdir/pr-42.state.json"
-    export PR_LOOP_CLAUDE_CMD='printf "state=%s\n" "$PR_LOOP_STATE_FILE"; printf "runner-out\n"; printf "runner-err\n" >&2; printf "RESULT_STAGE=review\n"'
+    LOCK_FILE="$tmpdir/pr-42.lock"
+    printf '%s\n' "$$" >"$LOCK_FILE"
+    state_write_json "$STATE_FILE" "$(default_state_json)"
+    export PR_LOOP_CLAUDE_CMD="printf 'state=%s\n' \"\$PR_LOOP_STATE_FILE\"; printf 'runner-out\n'; printf 'runner-err\n' >&2; '$ROOT_DIR/statectl.sh' set-next-stage review"
 
     run_claude_for_pr 42 plan deadbeef '{}' '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
 
@@ -466,8 +494,8 @@ test_run_claude_for_pr_streams_output_to_stdout() {
     assert_contains "state=$tmpdir/pr-42.state.json" "$(cat "$stdout_file")"
     assert_contains "runner-out" "$(cat "$stdout_file")"
     assert_contains "runner-err" "$(cat "$stdout_file")"
-    assert_contains "RESULT_STAGE=review" "$(cat "$stdout_file")"
     assert_eq "" "$(cat "$stderr_file")"
+    assert_eq "" "$(state_read_json "$STATE_FILE" '.next_stage // ""' "")"
   )
 }
 
@@ -499,11 +527,19 @@ EOF
     log_info() { :; }
     log_warn() { :; }
     build_claude_prompt() { printf 'prompt\n'; }
+    STATE_FILE="$tmpdir/pr-42.state.json"
+    LOCK_FILE="$tmpdir/pr-42.lock"
+    printf '%s\n' "$$" >"$LOCK_FILE"
+    state_write_json "$STATE_FILE" "$(default_state_json)"
+    export PR_LOOP_STATE_FILE="$STATE_FILE"
+    export PR_LOOP_LOCK_FILE="$LOCK_FILE"
+    export PR_LOOP_WORKER_PID="$$"
+    "$ROOT_DIR/statectl.sh" set-next-stage impl >/dev/null
     export PR_LOOP_CLAUDE_CMD="cat '$fixture'"
 
     run_claude_for_pr 42 plan deadbeef '{}' '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
 
-    assert_eq "review" "$CLAUDE_REQUESTED_STAGE"
+    assert_eq "plan" "$CLAUDE_REQUESTED_STAGE"
   )
 
   output=$(cat "$stdout_file")
@@ -642,7 +678,9 @@ EOF
       "$ROOT_DIR/statectl.sh" set-hint "focus reviewer" >/dev/null
       printf 'record-solved-comment:99\n' >>"$TEST_ACTIONS_FILE"
       "$ROOT_DIR/statectl.sh" add-solved-comment 99 >/dev/null
-      CLAUDE_REQUESTED_STAGE=impl
+      "$ROOT_DIR/statectl.sh" set-next-stage impl >/dev/null
+      CLAUDE_REQUESTED_STAGE=$(state_read_json "$TEST_STATE_FILE" '.next_stage // ""' "")
+      "$ROOT_DIR/statectl.sh" clear-next-stage >/dev/null
     }
     gh_post_stage_marker() {
       TEST_POSTED_STAGE=$2
@@ -661,6 +699,7 @@ EOF
   assert_eq $'post-issue-comment:501\nrecord-bot-issue-comment:501\npost-review-reply:601\nrecord-bot-review-reply:601\nrecord-solved-comment:99' "$(cat "$actions_file")"
   assert_eq "focus reviewer" "$(printf '%s\n' "$final_state" | jq -r '.hint')"
   assert_eq "[99]" "$(printf '%s\n' "$final_state" | jq -c '.last_solved_comment_ids')"
+  assert_eq "" "$(printf '%s\n' "$final_state" | jq -r '.next_stage')"
   assert_eq "[501,601]" "$(printf '%s\n' "$final_state" | jq -c '.recent_bot_comment_ids')"
   assert_eq "2026-04-06T00:02:00Z" "$(printf '%s\n' "$final_state" | jq -r '.last_pr_updated_at')"
   assert_eq "$expected_snapshot" "$(printf '%s\n' "$final_state" | jq -r '.last_snapshot')"
@@ -673,6 +712,7 @@ main() {
   run_test test_repo_slug_parsing
   run_test test_state_round_trip_and_array_uniqueness
   run_test test_statectl_updates_are_sanitized_and_scoped
+  run_test test_statectl_tracks_next_stage
   run_test test_statectl_tracks_recent_bot_comment_ids
   run_test test_load_state_json_migrates_legacy_comment_fields
   run_test test_stage_parsing_uses_only_strict_markers

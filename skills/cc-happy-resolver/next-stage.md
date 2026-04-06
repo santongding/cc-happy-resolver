@@ -7,3 +7,5 @@ Next-stage rules:
 - Use `finished` only when the finished criteria are satisfied.
 - If the push failed or the worktree is still dirty, keep the current stage.
 - If current-head comments clearly force a different kind of next pass, follow that evidence.
+- Record the stage with `<statectl-path> set-next-stage <plan|impl|review|finished>`.
+- Call `set-next-stage` only at the last moment, after all other statectl updates for the pass are complete.

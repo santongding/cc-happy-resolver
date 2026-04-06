@@ -11,3 +11,8 @@ Statectl Path: __WORKER_DIR__/statectl.sh
 Push Command: git push __PUSH_REMOTE__ HEAD:__PUSH_REF__
 
 Use the installed Claude skill `cc-happy-resolver`.
+
+Final output contract:
+- Do not use terminal output to report the next stage
+- Record the next stage with: __WORKER_DIR__/statectl.sh set-next-stage <plan|impl|review|finished>
+- Call set-next-stage only at the very end of the pass, after all other statectl updates and after the branch/PR state is final
