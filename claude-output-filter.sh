@@ -75,13 +75,18 @@ print_pretty_json() {
 emit_tool_call() {
   local name=$1
   local input_payload=${2:-}
+  local description=
 
   finish_text_block
-  printf 'Tool call: %s\n' "${name:-<unknown>}"
 
-  if [[ -n "$input_payload" && "$input_payload" != "null" && "$input_payload" != "{}" ]]; then
-    printf 'Input:\n'
-    print_pretty_json "$input_payload"
+  if [[ -n "$input_payload" ]] && printf '%s\n' "$input_payload" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    description=$(printf '%s\n' "$input_payload" | jq -r '.description // empty')
+  fi
+
+  if [[ -n "$description" ]]; then
+    printf 'Tool call: %s - %s\n' "${name:-<unknown>}" "$description"
+  else
+    printf 'Tool call: %s\n' "${name:-<unknown>}"
   fi
 }
 
@@ -155,7 +160,6 @@ handle_content_block_start() {
       [[ "$input_payload" == "{}" ]] && input_payload=
       block_tool_name[$index]=$name
       block_tool_input[$index]=$input_payload
-      emit_tool_call "$name"
       ;;
   esac
 }
@@ -202,11 +206,8 @@ handle_content_block_stop() {
     tool_use|server_tool_use|mcp_tool_use)
       input_payload=${block_tool_input[$index]:-}
       name=${block_tool_name[$index]:-}
-      if [[ -n "$input_payload" && "$input_payload" != "null" && "$input_payload" != "{}" ]]; then
-        printf 'Input:\n'
-        print_pretty_json "$input_payload"
-      elif [[ -z "$name" ]]; then
-        emit_tool_call "<unknown>"
+      if [[ -n "$name" || -n "$input_payload" ]]; then
+        emit_tool_call "${name:-<unknown>}" "$input_payload"
       fi
       ;;
   esac

@@ -9,7 +9,7 @@ Recent solved external comments: __LAST_SOLVED_COMMENT_IDS__
 Recent bot comments: __RECENT_BOT_COMMENT_IDS__
 Hint: __HINT__
 
-Continuously resolve GitHub PR #__PR_NUMBER__ by driving the Codex review cycle.
+Continuously resolve GitHub PR #__PR_NUMBER__.
 
 Stage Playbook:
 - Shared setup for every stage:
@@ -60,8 +60,6 @@ Persistence by Commit:
 Helper Commands:
 - Infer repo from git remote:
   REPO=$(git remote get-url origin | sed 's|.*github\.com[/:]||' | sed 's|\.git$||')
-- Check out the PR branch locally:
-  gh pr checkout __PR_NUMBER__ --repo "$REPO"
 - Read PR metadata:
   gh pr view __PR_NUMBER__ --repo "$REPO" --json headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup
 - Read the current head SHA:
@@ -126,9 +124,7 @@ Helper Commands:
 - Touch state without changing other fields:
   __WORKER_DIR__/statectl.sh mark-updated
 
-- If there is no Codex review on the current head, or you pushed new commits after the last Codex review, post:
-  @codex please review this PR.
-  Do not post another request if the current head already has an outstanding Codex review and no new commits were added.
+- Only require code review when in review stage
 
 Allowed stage transitions:
 - plan -> impl

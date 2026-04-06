@@ -241,7 +241,6 @@ EOF
     assert_contains "SUMMARY_ID=\$(gh api repos/\$REPO/issues/42/comments -f body=\"[pr-loop-bot] <summary>\" --jq '.id')" "$prompt"
     assert_contains "$ROOT_DIR/statectl.sh clear-recent-bot-comments" "$prompt"
     assert_contains "$ROOT_DIR/statectl.sh add-bot-comment \"\$SUMMARY_ID\"" "$prompt"
-    assert_contains 'gh pr checkout 42 --repo "$REPO"' "$prompt"
     assert_contains 'gh pr view 42 --repo "$REPO" --json headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup' "$prompt"
     assert_contains "git push origin HEAD:feature/prompt-template before posting summary comments or emitting a stage result." "$prompt"
     assert_contains "RESULT_STAGE=finished" "$prompt"
@@ -260,6 +259,7 @@ test_claude_output_filter_formats_stream_json_human_readably() {
 {"type":"content_block_stop","index":0}
 {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}}
 {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"git status\""}}
+{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":",\"description\":\"Check git status\""}}
 {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":",\"timeout_ms\":1000}"}}
 {"type":"content_block_stop","index":1}
 {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
@@ -271,7 +271,10 @@ EOF
   output=$("$ROOT_DIR/claude-output-filter.sh" <"$fixture")
 
   assert_contains $'Thinking:\nNeed to inspect files.' "$output"
-  assert_contains $'Tool call: Bash\nInput:\n{\n  "command": "git status",\n  "timeout_ms": 1000\n}' "$output"
+  assert_contains 'Tool call: Bash - Check git status' "$output"
+  assert_not_contains 'Input:' "$output"
+  assert_not_contains '"command": "git status"' "$output"
+  assert_not_contains '"description": "Check git status"' "$output"
   assert_contains $'Text:\nApplied the fix.\nRESULT_STAGE=review' "$output"
   assert_not_contains 'Error: Applied the fix.' "$output"
   assert_not_contains '"type":"system"' "$output"
@@ -425,6 +428,7 @@ test_run_claude_for_pr_filters_stream_json_output() {
 {"type":"content_block_stop","index":0}
 {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}}
 {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"git status\""}}
+{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":",\"description\":\"Check git status\""}}
 {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":",\"timeout_ms\":1000}"}}
 {"type":"content_block_stop","index":1}
 {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
@@ -447,7 +451,10 @@ EOF
 
   output=$(cat "$stdout_file")
   assert_contains $'Thinking:\nReviewing the diff.' "$output"
-  assert_contains $'Tool call: Bash\nInput:\n{\n  "command": "git status",\n  "timeout_ms": 1000\n}' "$output"
+  assert_contains 'Tool call: Bash - Check git status' "$output"
+  assert_not_contains 'Input:' "$output"
+  assert_not_contains '"command": "git status"' "$output"
+  assert_not_contains '"description": "Check git status"' "$output"
   assert_contains $'Text:\nPatch applied.\nRESULT_STAGE=review' "$output"
   assert_not_contains 'Error: Patch applied.' "$output"
   assert_not_contains '"type":"content_block_delta"' "$output"
