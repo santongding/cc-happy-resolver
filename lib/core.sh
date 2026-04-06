@@ -116,6 +116,10 @@ pr_lock_file() {
   printf '%s/pr-%s.lock\n' "$(ensure_repo_state_dir)" "$pr_number"
 }
 
+issue_scan_lock_file() {
+  printf '%s/issues-scan.lock\n' "$(ensure_repo_state_dir)"
+}
+
 default_state_json() {
   cat <<'EOF'
 {"last_solved_comments":[],"last_solved_subcomments":[],"last_head_sha":"","last_snapshot":"","last_pr_updated_at":"","hint":"","updated_at":""}

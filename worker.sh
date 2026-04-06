@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/core.sh"
-source "$SCRIPT_DIR/lib/gh.sh"
+PR_LOOP_WORKER_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$PR_LOOP_WORKER_DIR/lib/core.sh"
+source "$PR_LOOP_WORKER_DIR/lib/gh.sh"
 
 PR_LOOP_LOG_MODULE=worker
 
@@ -123,11 +123,11 @@ Allowed stage transitions:
 - otherwise keep the current stage
 
 Available commands:
-- $SCRIPT_DIR/statectl.sh set-hint "..."
-- $SCRIPT_DIR/statectl.sh add-solved-comment <id>
-- $SCRIPT_DIR/statectl.sh add-solved-subcomment <id>
-- $SCRIPT_DIR/statectl.sh set-last-head-sha <sha>
-- $SCRIPT_DIR/statectl.sh mark-updated
+- $PR_LOOP_WORKER_DIR/statectl.sh set-hint "..."
+- $PR_LOOP_WORKER_DIR/statectl.sh add-solved-comment <id>
+- $PR_LOOP_WORKER_DIR/statectl.sh add-solved-subcomment <id>
+- $PR_LOOP_WORKER_DIR/statectl.sh set-last-head-sha <sha>
+- $PR_LOOP_WORKER_DIR/statectl.sh mark-updated
 
 Final line must be exactly one of:
 RESULT_STAGE=plan

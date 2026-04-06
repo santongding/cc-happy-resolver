@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/core.sh"
-source "$SCRIPT_DIR/lib/gh.sh"
+PR_LOOP_LOOP_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$PR_LOOP_LOOP_DIR/lib/core.sh"
+source "$PR_LOOP_LOOP_DIR/lib/gh.sh"
 
 PR_LOOP_LOG_MODULE=loop
 
 dispatch_pr() {
   local pr_number=$1
   log_info "dispatching worker for PR #$pr_number"
-  "$SCRIPT_DIR/worker.sh" "$pr_number"
+  "$PR_LOOP_LOOP_DIR/worker.sh" "$pr_number"
   log_info "worker finished for PR #$pr_number"
 }
 
@@ -54,6 +54,7 @@ main() {
 
   while true; do
     log_info "starting scan iteration"
+    "$PR_LOOP_LOOP_DIR/issue-scan.sh"
     loop_once
     if [[ "$once" == "1" ]]; then
       log_info "completed single scan iteration"

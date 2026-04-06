@@ -10,6 +10,7 @@ INSTALL ?= install
 install:
 	$(INSTALL) -d "$(BINDIR)" "$(LIBEXECDIR)" "$(LIBEXECDIR)/lib"
 	$(INSTALL) -m 0755 pr-loop.sh "$(LIBEXECDIR)/pr-loop.sh"
+	$(INSTALL) -m 0755 issue-scan.sh "$(LIBEXECDIR)/issue-scan.sh"
 	$(INSTALL) -m 0755 worker.sh "$(LIBEXECDIR)/worker.sh"
 	$(INSTALL) -m 0755 statectl.sh "$(LIBEXECDIR)/statectl.sh"
 	$(INSTALL) -m 0644 lib/core.sh "$(LIBEXECDIR)/lib/core.sh"

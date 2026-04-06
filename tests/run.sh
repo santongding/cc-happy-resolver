@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/lib/core.sh"
 source "$ROOT_DIR/lib/gh.sh"
+source "$ROOT_DIR/issue-scan.sh"
 source "$ROOT_DIR/worker.sh"
 
 pass_count=0
@@ -158,6 +159,102 @@ test_validate_stage_transition_rules() {
   assert_eq "impl" "$(validate_stage_transition impl review 1)"
 }
 
+test_entrypoint_script_dirs_are_isolated_from_libs() {
+  (
+    source "$ROOT_DIR/pr-loop.sh"
+    source "$ROOT_DIR/issue-scan.sh"
+    source "$ROOT_DIR/worker.sh"
+    source "$ROOT_DIR/statectl.sh"
+
+    assert_eq "$ROOT_DIR" "$PR_LOOP_LOOP_DIR"
+    assert_eq "$ROOT_DIR" "$PR_LOOP_ISSUE_SCAN_DIR"
+    assert_eq "$ROOT_DIR" "$PR_LOOP_WORKER_DIR"
+    assert_eq "$ROOT_DIR" "$PR_LOOP_STATECTL_DIR"
+    assert_eq "$ROOT_DIR/lib" "$PR_LOOP_GH_LIB_DIR"
+  )
+}
+
+test_find_related_pr_number_matches_branch_or_issue_reference() {
+  local prs_json
+
+  prs_json=$(cat <<'EOF'
+[
+  {"number": 12, "headRefName": "feature/elsewhere", "title": "Unrelated", "body": ""},
+  {"number": 13, "headRefName": "cc-happy/issue-42", "title": "Seeded", "body": ""},
+  {"number": 14, "headRefName": "feature/manual", "title": "Fixes #99", "body": ""}
+]
+EOF
+)
+
+  assert_eq "13" "$(gh_find_related_pr_number 42 "$prs_json")"
+  assert_eq "14" "$(gh_find_related_pr_number 99 "$prs_json")"
+  assert_eq "" "$(gh_find_related_pr_number 777 "$prs_json")"
+}
+
+test_seed_issue_branch_creates_plan_branch_from_default() {
+  local tmpdir origin_repo work_repo diff_output plan_blob
+  tmpdir=$(mktemp -d)
+  origin_repo="$tmpdir/origin.git"
+  work_repo="$tmpdir/work"
+
+  git init --bare "$origin_repo" >/dev/null
+  git clone "$origin_repo" "$work_repo" >/dev/null 2>&1
+
+  (
+    cd "$work_repo"
+    git checkout -b main >/dev/null
+    printf 'hello\n' > README.md
+    git -c user.name='Tester' -c user.email='tester@example.com' add README.md
+    git -c user.name='Tester' -c user.email='tester@example.com' commit -m init >/dev/null
+    git push -u origin main >/dev/null
+    gh_seed_issue_branch 123 main
+    git fetch origin "refs/heads/cc-happy/issue-123:refs/remotes/origin/cc-happy/issue-123" >/dev/null
+    diff_output=$(git diff --name-status origin/main origin/cc-happy/issue-123)
+    plan_blob=$(git show origin/cc-happy/issue-123:PLAN.md)
+
+    assert_eq $'A\tPLAN.md' "$diff_output"
+    assert_eq "" "$plan_blob"
+    assert_eq "$(git show origin/main:README.md)" "$(git show origin/cc-happy/issue-123:README.md)"
+  )
+}
+
+test_scan_open_issues_creates_missing_prs_only() {
+  local tmpdir actions_file
+  tmpdir=$(mktemp -d)
+  actions_file="$tmpdir/actions.log"
+
+  (
+    source "$ROOT_DIR/issue-scan.sh"
+    export PR_LOOP_LOG_REPO=test__repo
+    export TEST_ISSUES_LOCK="$tmpdir/issues.lock"
+    export TEST_ACTIONS_FILE="$actions_file"
+    export TEST_PRS_JSON='[{"number":200,"headRefName":"cc-happy/issue-2","title":"Existing seed","body":""}]'
+
+    issue_scan_lock_file() { printf '%s\n' "$TEST_ISSUES_LOCK"; }
+    acquire_lock() { printf '%s\n' "$$" >"$1"; return 0; }
+    release_lock() { rm -f "$1"; return 0; }
+    gh_list_open_issues() {
+      cat <<'EOF'
+[{"number":1,"title":"First issue","body":"","updatedAt":"2026-04-06T00:00:00Z"},{"number":2,"title":"Second issue","body":"","updatedAt":"2026-04-06T00:00:00Z"}]
+EOF
+    }
+    gh_list_open_prs() { printf '%s\n' "$TEST_PRS_JSON"; }
+    gh_repo_default_branch() { printf '%s\n' "main"; }
+    gh_seed_issue_branch() {
+      printf 'seed:%s:%s\n' "$1" "$2" >>"$TEST_ACTIONS_FILE"
+    }
+    gh_create_issue_pr() {
+      printf 'pr:%s:%s:%s\n' "$1" "$2" "$3" >>"$TEST_ACTIONS_FILE"
+      TEST_PRS_JSON='[{"number":200,"headRefName":"cc-happy/issue-2","title":"Existing seed","body":""},{"number":201,"headRefName":"cc-happy/issue-1","title":"Issue #1: First issue","body":"Closes #1"}]'
+      export TEST_PRS_JSON
+    }
+
+    scan_open_issues
+  )
+
+  assert_eq $'seed:1:main\npr:1:First issue:main' "$(cat "$actions_file")"
+}
+
 test_process_pr_reloads_state_and_recomputes_snapshot() {
   local tmpdir state_file lock_file final_state expected_snapshot
 
@@ -240,7 +337,7 @@ EOF
 
 main() {
   require_cmd bash git jq mktemp
-  bash -n "$ROOT_DIR/pr-loop.sh" "$ROOT_DIR/worker.sh" "$ROOT_DIR/statectl.sh" "$ROOT_DIR/lib/core.sh" "$ROOT_DIR/lib/gh.sh"
+  bash -n "$ROOT_DIR/pr-loop.sh" "$ROOT_DIR/issue-scan.sh" "$ROOT_DIR/worker.sh" "$ROOT_DIR/statectl.sh" "$ROOT_DIR/lib/core.sh" "$ROOT_DIR/lib/gh.sh"
 
   run_test test_repo_slug_parsing
   run_test test_state_round_trip_and_array_uniqueness
@@ -248,6 +345,10 @@ main() {
   run_test test_stage_parsing_uses_only_strict_markers
   run_test test_snapshot_changes_when_review_reply_changes
   run_test test_validate_stage_transition_rules
+  run_test test_entrypoint_script_dirs_are_isolated_from_libs
+  run_test test_find_related_pr_number_matches_branch_or_issue_reference
+  run_test test_seed_issue_branch_creates_plan_branch_from_default
+  run_test test_scan_open_issues_creates_missing_prs_only
   run_test test_process_pr_reloads_state_and_recomputes_snapshot
 
   printf '\nPassed: %d\nFailed: %d\n' "$pass_count" "$fail_count"

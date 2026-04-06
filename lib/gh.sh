@@ -5,8 +5,8 @@ if [[ -n "${PR_LOOP_GH_SH_LOADED:-}" ]]; then
 fi
 PR_LOOP_GH_SH_LOADED=1
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/core.sh"
+PR_LOOP_GH_LIB_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$PR_LOOP_GH_LIB_DIR/core.sh"
 
 readonly PR_LOOP_STAGE_PREFIX='[pr-loop-bot] <!-- PR-LOOP:STAGE:'
 readonly PR_LOOP_STAGE_SUFFIX=':DO-NOT-EDIT -->'
@@ -38,10 +38,137 @@ gh_list_open_prs() {
         maintainerCanModify: (.maintainer_can_modify // false),
         isCrossRepository: ((.head.repo.full_name // "") != (.base.repo.full_name // "")),
         title: (.title // ""),
+        body: (.body // ""),
         htmlUrl: (.html_url // "")
       }
     ]
   '
+}
+
+gh_list_open_issues() {
+  local slug
+  slug=$(repo_slug) || return 1
+  log_info "listing open issues for $slug"
+
+  gh api --paginate --slurp "repos/$slug/issues?state=open&per_page=100" | jq -c '
+    [
+      .[][]?
+      | select(has("pull_request") | not)
+      | {
+          number,
+          title: (.title // ""),
+          body: (.body // ""),
+          updatedAt: (.updated_at // ""),
+          htmlUrl: (.html_url // "")
+        }
+    ]
+  '
+}
+
+gh_repo_default_branch() {
+  local slug
+  slug=$(repo_slug) || return 1
+  log_info "fetching default branch for $slug"
+  gh api "repos/$slug" | jq -r '.default_branch // empty'
+}
+
+gh_issue_branch_name() {
+  local issue_number=$1
+  printf 'cc-happy/issue-%s\n' "$issue_number"
+}
+
+gh_find_related_pr_number() {
+  local issue_number=$1
+  local prs_json=$2
+  local branch_name issue_ref_regex
+
+  branch_name=$(gh_issue_branch_name "$issue_number")
+  issue_ref_regex="(^|[^0-9])#${issue_number}([^0-9]|$)"
+
+  printf '%s\n' "$prs_json" | jq -r \
+    --arg branch_name "$branch_name" \
+    --arg issue_ref_regex "$issue_ref_regex" '
+      [
+        .[]?
+        | select(
+            (.headRefName // "") == $branch_name
+            or ((.title // "") | test($issue_ref_regex))
+            or ((.body // "") | test($issue_ref_regex))
+          )
+      ]
+      | if length == 0 then "" else (.[0].number | tostring) end
+    '
+}
+
+gh_remote_branch_exists() {
+  local branch_name=$1
+  git ls-remote --exit-code --heads origin "$branch_name" >/dev/null 2>&1
+}
+
+gh_seed_issue_branch() {
+  local issue_number=$1
+  local default_branch=$2
+  local branch_name=${3:-}
+  local worktree_dir=
+
+  if [[ -z "$branch_name" ]]; then
+    branch_name=$(gh_issue_branch_name "$issue_number")
+  fi
+
+  if gh_remote_branch_exists "$branch_name"; then
+    log_info "remote branch $branch_name already exists for issue #$issue_number"
+    return 0
+  fi
+
+  log_info "seeding branch $branch_name from origin/$default_branch for issue #$issue_number"
+  worktree_dir=$(mktemp -d "${TMPDIR:-/tmp}/pr-loop.issue-branch.XXXXXX")
+
+  (
+    set -euo pipefail
+    trap 'git worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true; rm -rf "$worktree_dir"' EXIT INT TERM
+
+    git fetch origin "refs/heads/$default_branch:refs/remotes/origin/$default_branch"
+    git worktree add --force --detach "$worktree_dir" "origin/$default_branch" >/dev/null
+
+    cd "$worktree_dir"
+    git checkout -B "$branch_name" >/dev/null
+    : > PLAN.md
+    git add PLAN.md
+
+    if git diff --cached --quiet; then
+      log_warn "seed branch $branch_name has no diff against $default_branch; expected PLAN.md to create a diff"
+      return 1
+    fi
+
+    git -c user.name="${PR_LOOP_GIT_USER_NAME:-pr-loop-bot}" \
+      -c user.email="${PR_LOOP_GIT_USER_EMAIL:-pr-loop-bot@example.invalid}" \
+      commit -m "chore: seed issue #$issue_number" >/dev/null
+    git push -u origin "$branch_name" >/dev/null
+  )
+}
+
+gh_create_issue_pr() {
+  local issue_number=$1
+  local issue_title=$2
+  local default_branch=$3
+  local branch_name=${4:-}
+  local pr_title pr_body sanitized_title
+
+  if [[ -z "$branch_name" ]]; then
+    branch_name=$(gh_issue_branch_name "$issue_number")
+  fi
+
+  sanitized_title=$(printf '%s' "$issue_title" | tr '\r\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')
+  pr_title="Issue #$issue_number: ${sanitized_title:-Untitled issue}"
+  pr_body=$(cat <<EOF
+Closes #$issue_number
+
+[pr-loop-bot] Seed PR created automatically for issue #$issue_number.
+EOF
+)
+
+  log_info "creating PR for issue #$issue_number base=$default_branch head=$branch_name"
+  gh pr create --base "$default_branch" --head "$branch_name" --title "$pr_title" --body "$pr_body"
 }
 
 gh_pr_meta() {
