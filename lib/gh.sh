@@ -132,11 +132,11 @@ gh_seed_issue_branch() {
 
     cd "$worktree_dir"
     git checkout -B "$branch_name" >/dev/null
-    : > PLAN.md
-    git add PLAN.md
+    : > PROGRESS.md
+    git add PROGRESS.md
 
     if git diff --cached --quiet; then
-      log_warn "seed branch $branch_name has no diff against $default_branch; expected PLAN.md to create a diff"
+      log_warn "seed branch $branch_name has no diff against $default_branch; expected PROGRESS.md to create a diff"
       return 1
     fi
 

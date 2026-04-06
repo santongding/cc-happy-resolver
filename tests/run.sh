@@ -354,9 +354,9 @@ test_seed_issue_branch_creates_plan_branch_from_default() {
     gh_seed_issue_branch 123 main
     git fetch origin "refs/heads/cc-happy/issue-123:refs/remotes/origin/cc-happy/issue-123" >/dev/null
     diff_output=$(git diff --name-status origin/main origin/cc-happy/issue-123)
-    plan_blob=$(git show origin/cc-happy/issue-123:PLAN.md)
+    plan_blob=$(git show origin/cc-happy/issue-123:PROGRESS.md)
 
-    assert_eq $'A\tPLAN.md' "$diff_output"
+    assert_eq $'A\tPROGRESS.md' "$diff_output"
     assert_eq "" "$plan_blob"
     assert_eq "$(git show origin/main:README.md)" "$(git show origin/cc-happy/issue-123:README.md)"
   )

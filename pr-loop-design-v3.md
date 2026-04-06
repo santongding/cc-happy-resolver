@@ -113,7 +113,7 @@ issue 扫描入口，只负责“issue 是否需要先被提升为 seed PR”这
 - 扫描当前 repo 的所有 open issues
 - 判断 issue 是否已经有关联的 open PR
 - 若无关联 PR，则创建 `cc-happy/issue-<id>` 分支
-- 新分支必须从 repo 默认分支切出，且除一个空的 `PLAN.md` 外与默认分支完全一致
+- 新分支必须从 repo 默认分支切出，且除一个空的 `PROGRESS.md` 外与默认分支完全一致
 - 将该分支 push 到远端后创建 PR
 - 新创建 PR 的 title 和 body 必须直接复制自 issue 的 title 和 body
 
