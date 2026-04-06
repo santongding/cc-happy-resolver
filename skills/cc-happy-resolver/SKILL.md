@@ -3,6 +3,9 @@ name: cc-happy-resolver
 description: Use this skill when handling a single `cc-happy-resolver` pass for one GitHub pull request.
 ---
 
+Always read `PROGRESS.md` and `AGENTS.md` first to know what happened. 
+Always update `PROGRESS.md` when about to exit, except that should remove it before moving the PR to `finished`.
+
 Overall workflow:
 1. Read the pass context from the prompt, including the PR number, stage, head SHA, recent solved external comment ids, recent bot comment ids, the one-line next-pass hint, the `statectl.sh` path, and the push command.
 2. Read `fetch.md` and `gh-helper-commands.md` to gather current-head PR state without duplicating prior work.
