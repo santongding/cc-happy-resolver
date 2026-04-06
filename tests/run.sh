@@ -33,6 +33,12 @@ assert_contains() {
   [[ "$haystack" == *"$needle"* ]] || fail "expected to find [$needle]"
 }
 
+assert_not_contains() {
+  local needle=$1
+  local haystack=$2
+  [[ "$haystack" != *"$needle"* ]] || fail "did not expect to find [$needle]"
+}
+
 run_test() {
   local name=$1
   local status
@@ -242,6 +248,36 @@ EOF
   )
 }
 
+test_claude_output_filter_formats_stream_json_human_readably() {
+  local tmpdir fixture output
+  tmpdir=$(mktemp -d)
+  fixture="$tmpdir/claude-stream.jsonl"
+
+  cat >"$fixture" <<'EOF'
+{"type":"system","subtype":"init","session_id":"session-1"}
+{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Need to inspect files."}}
+{"type":"content_block_stop","index":0}
+{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}}
+{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"git status\""}}
+{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":",\"timeout_ms\":1000}"}}
+{"type":"content_block_stop","index":1}
+{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
+{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Applied the fix.\nRESULT_STAGE=review"}}
+{"type":"content_block_stop","index":2}
+{"type":"result","subtype":"success","is_error":false,"result":"Applied the fix.\nRESULT_STAGE=review"}
+EOF
+
+  output=$("$ROOT_DIR/claude-output-filter.sh" <"$fixture")
+
+  assert_contains $'Thinking:\nNeed to inspect files.' "$output"
+  assert_contains $'Tool call: Bash\nInput:\n{\n  "command": "git status",\n  "timeout_ms": 1000\n}' "$output"
+  assert_contains $'Text:\nApplied the fix.\nRESULT_STAGE=review' "$output"
+  assert_not_contains 'Error: Applied the fix.' "$output"
+  assert_not_contains '"type":"system"' "$output"
+  assert_not_contains '"type":"content_block_delta"' "$output"
+}
+
 test_entrypoint_script_dirs_are_isolated_from_libs() {
   (
     source "$ROOT_DIR/pr-loop.sh"
@@ -375,6 +411,49 @@ test_run_claude_for_pr_streams_output_to_stdout() {
   )
 }
 
+test_run_claude_for_pr_filters_stream_json_output() {
+  local tmpdir fixture stdout_file stderr_file output
+  tmpdir=$(mktemp -d)
+  fixture="$tmpdir/claude-stream.jsonl"
+  stdout_file="$tmpdir/stdout.log"
+  stderr_file="$tmpdir/stderr.log"
+
+  cat >"$fixture" <<'EOF'
+{"type":"system","subtype":"init","session_id":"session-1"}
+{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Reviewing the diff."}}
+{"type":"content_block_stop","index":0}
+{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}}
+{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"git status\""}}
+{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":",\"timeout_ms\":1000}"}}
+{"type":"content_block_stop","index":1}
+{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
+{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Patch applied.\nRESULT_STAGE=review"}}
+{"type":"content_block_stop","index":2}
+{"type":"result","subtype":"success","is_error":false,"result":"Patch applied.\nRESULT_STAGE=review"}
+EOF
+
+  (
+    source "$ROOT_DIR/worker.sh"
+    log_info() { :; }
+    log_warn() { :; }
+    build_claude_prompt() { printf 'prompt\n'; }
+    export PR_LOOP_CLAUDE_CMD="cat '$fixture'"
+
+    run_claude_for_pr 42 plan deadbeef '{}' "$tmpdir/context.json" '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
+
+    assert_eq "review" "$CLAUDE_REQUESTED_STAGE"
+  )
+
+  output=$(cat "$stdout_file")
+  assert_contains $'Thinking:\nReviewing the diff.' "$output"
+  assert_contains $'Tool call: Bash\nInput:\n{\n  "command": "git status",\n  "timeout_ms": 1000\n}' "$output"
+  assert_contains $'Text:\nPatch applied.\nRESULT_STAGE=review' "$output"
+  assert_not_contains 'Error: Patch applied.' "$output"
+  assert_not_contains '"type":"content_block_delta"' "$output"
+  assert_eq "" "$(cat "$stderr_file")"
+}
+
 test_scan_open_issues_creates_missing_prs_only() {
   local tmpdir actions_file
   tmpdir=$(mktemp -d)
@@ -420,6 +499,7 @@ test_make_install_copies_prompt_template() {
   make -C "$ROOT_DIR" install PREFIX="$prefix" >/dev/null
 
   [[ -x "$prefix/bin/pr-loop" ]] || fail "expected installed launcher at $prefix/bin/pr-loop"
+  [[ -x "$prefix/lib/pr-loop/claude-output-filter.sh" ]] || fail "expected installed Claude output filter"
   [[ -f "$prefix/lib/pr-loop/prompts/claude-pr-worker.prompt.tmpl" ]] || fail "expected installed prompt template"
   assert_eq "$(cat "$ROOT_DIR/prompts/claude-pr-worker.prompt.tmpl")" "$(cat "$prefix/lib/pr-loop/prompts/claude-pr-worker.prompt.tmpl")"
 }
@@ -529,12 +609,14 @@ main() {
   run_test test_snapshot_changes_when_review_reply_changes
   run_test test_validate_stage_transition_rules
   run_test test_build_claude_prompt_renders_standalone_template
+  run_test test_claude_output_filter_formats_stream_json_human_readably
   run_test test_entrypoint_script_dirs_are_isolated_from_libs
   run_test test_find_related_pr_number_matches_branch_or_issue_reference
   run_test test_seed_issue_branch_creates_plan_branch_from_default
   run_test test_prepare_pr_workspace_uses_pr_head_branch_for_same_repo
   run_test test_prepare_pr_workspace_uses_pr_head_branch_for_forks
   run_test test_run_claude_for_pr_streams_output_to_stdout
+  run_test test_run_claude_for_pr_filters_stream_json_output
   run_test test_scan_open_issues_creates_missing_prs_only
   run_test test_make_install_copies_prompt_template
   run_test test_process_pr_reloads_state_and_recomputes_snapshot

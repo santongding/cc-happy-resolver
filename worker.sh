@@ -127,20 +127,24 @@ run_claude_for_pr() {
   local state_json=$4
   local ctx_file=$5
   local meta_json=$6
-  local claude_cmd exit_code result_line
-  local stdout_pipe stderr_pipe stdout_tee_pid stderr_tee_pid
+  local claude_cmd claude_filter exit_code filter_exit
+  local result_line raw_stdout_pipe stdout_pipe stderr_pipe
+  local stdout_tee_pid stderr_tee_pid filter_pid stdout_tee_exit stderr_tee_exit
 
   PROMPT_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-loop.prompt.XXXXXX")
   CLAUDE_STDOUT_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stdout.XXXXXX")
   CLAUDE_STDERR_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stderr.XXXXXX")
+  raw_stdout_pipe=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stdout.raw.pipe.XXXXXX")
   stdout_pipe=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stdout.pipe.XXXXXX")
   stderr_pipe=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stderr.pipe.XXXXXX")
-  rm -f "$stdout_pipe" "$stderr_pipe"
-  mkfifo "$stdout_pipe" "$stderr_pipe"
+  rm -f "$raw_stdout_pipe" "$stdout_pipe" "$stderr_pipe"
+  mkfifo "$raw_stdout_pipe" "$stdout_pipe" "$stderr_pipe"
 
   build_claude_prompt "$pr_number" "$stage" "$head_sha" "$state_json" "$ctx_file" "$meta_json" >"$PROMPT_FILE"
 
-  claude_cmd=${PR_LOOP_CLAUDE_CMD:-claude -p --dangerously-skip-permissions}
+  claude_cmd=${PR_LOOP_CLAUDE_CMD:-claude -p --verbose --output-format stream-json --dangerously-skip-permissions}
+  claude_filter=${PR_LOOP_CLAUDE_OUTPUT_FILTER:-$PR_LOOP_WORKER_DIR/claude-output-filter.sh}
+  [[ -x "$claude_filter" ]] || die "missing Claude output filter: $claude_filter"
   CLAUDE_REQUESTED_STAGE=$stage
   export PR_LOOP_PR_NUMBER="$pr_number"
   export PR_LOOP_LOCK_FILE="$LOCK_FILE"
@@ -148,19 +152,33 @@ run_claude_for_pr() {
   export PR_LOOP_CONTEXT_FILE="$ctx_file"
   export PR_LOOP_REPO_ROOT="$(pwd -P)"
 
-  log_info "starting Claude runner command=${claude_cmd} prompt_file=$PROMPT_FILE"
+  log_info "starting Claude runner command=${claude_cmd} filter=$claude_filter prompt_file=$PROMPT_FILE"
 
   tee "$CLAUDE_STDOUT_FILE" <"$stdout_pipe" &
   stdout_tee_pid=$!
   tee "$CLAUDE_STDERR_FILE" <"$stderr_pipe" &
   stderr_tee_pid=$!
+  "$claude_filter" <"$raw_stdout_pipe" >"$stdout_pipe" 2>"$stderr_pipe" &
+  filter_pid=$!
 
   set +e
-  bash -lc "$claude_cmd" <"$PROMPT_FILE" >"$stdout_pipe" 2>"$stderr_pipe"
+  bash -lc "$claude_cmd" <"$PROMPT_FILE" >"$raw_stdout_pipe" 2>"$stderr_pipe"
   exit_code=$?
+  wait "$filter_pid"
+  filter_exit=$?
+  wait "$stdout_tee_pid"
+  stdout_tee_exit=$?
+  wait "$stderr_tee_pid"
+  stderr_tee_exit=$?
   set -e
-  wait "$stdout_tee_pid" "$stderr_tee_pid"
-  rm -f "$stdout_pipe" "$stderr_pipe"
+  rm -f "$raw_stdout_pipe" "$stdout_pipe" "$stderr_pipe"
+
+  if [[ $exit_code -eq 0 && $filter_exit -ne 0 ]]; then
+    exit_code=$filter_exit
+  fi
+  if [[ $stdout_tee_exit -ne 0 || $stderr_tee_exit -ne 0 ]]; then
+    log_warn "tee exited unexpectedly stdout=$stdout_tee_exit stderr=$stderr_tee_exit"
+  fi
 
   result_line=$(awk 'NF { line = $0 } END { print line }' "$CLAUDE_STDOUT_FILE")
   if [[ $exit_code -ne 0 ]]; then

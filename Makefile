@@ -13,6 +13,7 @@ install:
 	$(INSTALL) -m 0755 issue-scan.sh "$(LIBEXECDIR)/issue-scan.sh"
 	$(INSTALL) -m 0755 worker.sh "$(LIBEXECDIR)/worker.sh"
 	$(INSTALL) -m 0755 statectl.sh "$(LIBEXECDIR)/statectl.sh"
+	$(INSTALL) -m 0755 claude-output-filter.sh "$(LIBEXECDIR)/claude-output-filter.sh"
 	$(INSTALL) -m 0644 lib/core.sh "$(LIBEXECDIR)/lib/core.sh"
 	$(INSTALL) -m 0644 lib/gh.sh "$(LIBEXECDIR)/lib/gh.sh"
 	$(INSTALL) -m 0644 prompts/claude-pr-worker.prompt.tmpl "$(LIBEXECDIR)/prompts/claude-pr-worker.prompt.tmpl"
