@@ -157,7 +157,7 @@ test_stage_parsing_uses_only_strict_markers() {
     {"id": 1, "body": "> [pr-loop-bot] <!-- PR-LOOP:STAGE:impl:DO-NOT-EDIT -->", "createdAt": "2026-04-06T00:00:00Z", "updatedAt": "2026-04-06T00:00:00Z"},
     {"id": 2, "body": "[pr-loop-bot] <!-- PR-LOOP:STAGE:impl:DO-NOT-EDIT -->\nextra", "createdAt": "2026-04-06T00:01:00Z", "updatedAt": "2026-04-06T00:01:00Z"},
     {"id": 3, "body": "[pr-loop-bot] <!-- PR-LOOP:STAGE:impl:DO-NOT-EDIT -->", "createdAt": "2026-04-06T00:02:00Z", "updatedAt": "2026-04-06T00:02:00Z"},
-    {"id": 4, "body": "[pr-loop-bot] <!-- PR-LOOP:STAGE:review:DO-NOT-EDIT -->", "createdAt": "2026-04-06T00:03:00Z", "updatedAt": "2026-04-06T00:03:00Z"}
+    {"id": 4, "body": "[pr-loop-bot] PR-LOOP:STAGE:review:DO-NOT-EDIT", "createdAt": "2026-04-06T00:03:00Z", "updatedAt": "2026-04-06T00:03:00Z"}
   ],
   "reviewComments": [],
   "reviews": []
@@ -165,6 +165,10 @@ test_stage_parsing_uses_only_strict_markers() {
 EOF
 
   assert_eq "review" "$(gh_pr_stage "$ctx_file")"
+}
+
+test_stage_marker_rendering_is_human_visible() {
+  assert_eq "[pr-loop-bot] PR-LOOP:STAGE:impl:DO-NOT-EDIT" "$(gh_stage_marker impl | tr -d '\n')"
 }
 
 test_snapshot_changes_when_review_reply_changes() {
@@ -635,6 +639,7 @@ main() {
   run_test test_statectl_tracks_recent_bot_comment_ids
   run_test test_load_state_json_migrates_legacy_comment_fields
   run_test test_stage_parsing_uses_only_strict_markers
+  run_test test_stage_marker_rendering_is_human_visible
   run_test test_snapshot_changes_when_review_reply_changes
   run_test test_validate_stage_transition_rules
   run_test test_build_claude_prompt_renders_standalone_template

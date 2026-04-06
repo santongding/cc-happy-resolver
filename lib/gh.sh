@@ -8,9 +8,9 @@ PR_LOOP_GH_SH_LOADED=1
 PR_LOOP_GH_LIB_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$PR_LOOP_GH_LIB_DIR/core.sh"
 
-readonly PR_LOOP_STAGE_PREFIX='[pr-loop-bot] <!-- PR-LOOP:STAGE:'
-readonly PR_LOOP_STAGE_SUFFIX=':DO-NOT-EDIT -->'
-readonly PR_LOOP_STAGE_REGEX='^[[:space:]]*\[pr-loop-bot\][[:space:]]*<!--[[:space:]]*PR-LOOP:STAGE:(plan|impl|review|finished):DO-NOT-EDIT[[:space:]]*-->[[:space:]]*$'
+readonly PR_LOOP_STAGE_PREFIX='[pr-loop-bot] PR-LOOP:STAGE:'
+readonly PR_LOOP_STAGE_SUFFIX=':DO-NOT-EDIT'
+readonly PR_LOOP_STAGE_REGEX='^[[:space:]]*\[pr-loop-bot\][[:space:]]*(PR-LOOP:STAGE:(plan|impl|review|finished):DO-NOT-EDIT|<!--[[:space:]]*PR-LOOP:STAGE:(plan|impl|review|finished):DO-NOT-EDIT[[:space:]]*-->)[[:space:]]*$'
 
 gh_stage_marker() {
   local stage=$1
