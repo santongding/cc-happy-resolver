@@ -361,6 +361,23 @@ EOF
   assert_not_contains 'Input:' "$output"
 }
 
+test_claude_output_filter_shows_read_filename() {
+  local tmpdir fixture output
+  tmpdir=$(mktemp -d)
+  fixture="$tmpdir/claude-stream.jsonl"
+
+  cat >"$fixture" <<'EOF'
+{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}}
+{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"/tmp/workspace/src/filter.ts\"}"}}
+{"type":"content_block_stop","index":0}
+EOF
+
+  output=$("$ROOT_DIR/claude-output-filter.sh" <"$fixture")
+
+  assert_contains 'Tool call: Read - filter.ts' "$output"
+  assert_not_contains 'Tool call: Read - /tmp/workspace/src/filter.ts' "$output"
+}
+
 test_entrypoint_script_dirs_are_isolated_from_libs() {
   (
     source "$ROOT_DIR/pr-loop.sh"

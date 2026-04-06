@@ -91,19 +91,58 @@ extract_json_string_field() {
   printf '\n'
 }
 
+basename_or_original() {
+  local value=$1
+
+  [[ -n "$value" ]] || return 0
+
+  if [[ "$value" == */* ]]; then
+    printf '%s\n' "${value##*/}"
+  else
+    printf '%s\n' "$value"
+  fi
+}
+
+extract_tool_detail() {
+  local name=$1
+  local input_payload=$2
+  local description=
+  local command=
+  local path=
+
+  case "$name" in
+    Read)
+      path=$(extract_json_string_field "$input_payload" file_path)
+      [[ -n "$path" ]] || path=$(extract_json_string_field "$input_payload" path)
+      [[ -n "$path" ]] || path=$(extract_json_string_field "$input_payload" filepath)
+      [[ -n "$path" ]] || path=$(extract_json_string_field "$input_payload" filename)
+      if [[ -n "$path" ]]; then
+        basename_or_original "$path"
+        return 0
+      fi
+      ;;
+  esac
+
+  description=$(extract_json_string_field "$input_payload" description)
+  command=$(extract_json_string_field "$input_payload" command)
+
+  if [[ -n "$description" ]]; then
+    printf '%s\n' "$description"
+  elif [[ -n "$command" ]]; then
+    printf '%s\n' "$command"
+  else
+    printf '\n'
+  fi
+}
+
 emit_tool_call() {
   local name=$1
   local input_payload=${2:-}
-  local description=
-  local command=
   local detail=
 
   finish_text_block
 
-  description=$(extract_json_string_field "$input_payload" description)
-  command=$(extract_json_string_field "$input_payload" command)
-  detail=${description:-}
-  [[ -n "$detail" ]] || detail=${command:-}
+  detail=$(extract_tool_detail "$name" "$input_payload")
 
   if [[ -n "$detail" ]]; then
     printf 'Tool call: %s - %s\n' "${name:-<unknown>}" "$detail"
