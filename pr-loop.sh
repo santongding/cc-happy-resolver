@@ -27,7 +27,7 @@ loop_once() {
 }
 
 main() {
-  local interval=${PR_LOOP_POLL_SECONDS:-60}
+  local interval=${PR_LOOP_POLL_SECONDS:-30}
   local once=0
 
   while [[ $# -gt 0 ]]; do
