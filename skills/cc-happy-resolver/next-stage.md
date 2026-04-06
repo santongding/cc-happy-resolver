@@ -5,7 +5,6 @@ Next-stage rules:
 - Use `impl` when the next pass should make code, config, or test changes.
 - Use `review` when the next pass should verify the current head, handle review feedback, or confirm merge readiness.
 - Use `finished` only when the finished criteria are satisfied.
-- If the push failed or the worktree is still dirty, keep the current stage.
 - If current-head comments clearly force a different kind of next pass, follow that evidence.
 - Record the stage with `<statectl-path> set-next-stage <plan|impl|review|finished>`.
 - Call `set-next-stage` only at the last moment, after all other statectl updates for the pass are complete.
