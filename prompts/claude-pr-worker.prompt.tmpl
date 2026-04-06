@@ -5,44 +5,59 @@ Stage: __STAGE__
 Head SHA: __HEAD_SHA__
 Context JSON: __CONTEXT_JSON__
 
-Last solved comments: __LAST_SOLVED_COMMENTS__
-Last solved subcomments: __LAST_SOLVED_SUBCOMMENTS__
+Recent solved external comments: __LAST_SOLVED_COMMENT_IDS__
+Recent bot comments: __RECENT_BOT_COMMENT_IDS__
 Hint: __HINT__
 
 Continuously resolve GitHub PR #__PR_NUMBER__ by driving the Codex review cycle.
 
-Iteration procedure:
-1. Infer the repo from git remote:
-   REPO=$(git remote get-url origin | sed 's|.*github\.com[/:]||' | sed 's|\.git$||')
-   Then check out the PR branch:
-   gh pr checkout __PR_NUMBER__ --repo "$REPO"
-2. Read current PR metadata for the current head SHA, review decision, merge state, and status checks. Treat reviews as current only when the review commit_id matches the current head SHA.
-3. Fetch reviews for the PR, identify the latest review on the current head, fetch that review's comments, and query unresolved review threads with GraphQL so thread IDs are available for resolution.
-4. Inspect CI for the current head. If required checks are failing, inspect the failing logs with gh, fix the issue locally, run the relevant tests, commit, and push.
-5. For actionable unresolved review feedback on the current head, make the necessary code changes locally, run the relevant tests, commit, and push. If a comment should not be implemented, reply with concrete reasoning instead of ignoring it.
-6. After pushing fixes, reply on each addressed review comment with a short explanation of what changed. Resolve only the threads you actually addressed, using resolveReviewThread.
-7. If there is no Codex review on the current head, or you pushed new commits after the last Codex review, post:
-   @codex please review this PR.
-   Do not post another request if the current head already has an outstanding Codex review and no new commits were added.
-8. Success criteria:
-   - No more PR review opinions from Codex for the current head
-   - required checks are green for the current head
-   - PR merge state is mergeable
-   If and only if all three are true, output exactly:
-   RESULT_STAGE=finished
-   then exit.
-9. If success criteria are not met, exit normally. Ralph will feed this same prompt back on the next iteration.
+Stage Playbook:
+- Shared setup for every stage:
+  Infer the repo from git remote, check out the PR branch, read PR metadata, fetch reviews on the current head only, and inspect unresolved review threads plus CI on the current head.
+- plan:
+  Inspect current-head review and CI state, then write repo-root PROGRESS.md with at least the stage, current head SHA, work completed, tests run, blockers or next steps, and the intended next pass. If the repo already has a legitimate user-owned PROGRESS.md, do not overwrite it; instead use a bot-owned fallback file such as .pr-loop-progress.md or a clearly delimited bot section. Commit and push that progress snapshot before posting a top-level PR summary comment. After the comment succeeds, clear the recent bot comment ids for this pass, record the new bot comment id, and only then update any solved-comment state.
+- impl:
+  Make the required code or experiment changes, update the progress artifact, run the relevant tests, and commit and push before any summary comment or review reply. After the push succeeds, post one top-level PR summary comment, then reply on each addressed review comment with a short explanation. Record the new bot comment ids only after GitHub returns them. Record solved external comment ids after the bot comment ids are stored. Resolve only the review threads you actually addressed. If a comment should not be implemented, reply with concrete reasoning instead of ignoring it.
+- review:
+  Verify the current head, required checks, mergeability, and unresolved feedback. Update the progress artifact with the review outcome, commit and push, then post the top-level PR summary comment and any needed review replies. Record the returned bot comment ids only after the comments exist on GitHub. If you intend to move to finished, remove transient status artifacts such as PROGRESS.md from the branch head before the final push so repo-unrelated tracking files do not remain.
+- Finished criteria:
+  Only move review -> finished when there are no more Codex review opinions on the current head, required checks are green on the current head, and the PR merge state is mergeable. If and only if all three are true, output exactly:
+  RESULT_STAGE=finished
+  then exit. Otherwise exit normally and Ralph will feed this prompt back on the next iteration.
+
+Outer Worker Contract:
+- Worker ownership:
+  worker.sh owns workspace preparation, reruns, and legal stage transitions. Claude owns exactly one pass and must not sleep or wait.
+- Workspace rule:
+  This worker resets and cleans the git worktree before each run. Unpushed local changes will be lost on the next run.
+- State rule:
+  Do not edit the local state JSON directly. Only use __WORKER_DIR__/statectl.sh to update allowed local state fields.
+- Comment rule:
+  Any machine-written business comment must start with: [pr-loop-bot]
+- Stage-marker rule:
+  Stage-marker comments are worker-owned. Your top-level summary comments are separate business comments and must not mimic the stage-marker format.
 
 Rules:
-- Do not sleep or wait inside the iteration.
 - Do not lie with the final result.
 - Exit after one pass; Ralph is responsible for the next iteration.
-- This worker resets and cleans the git worktree before each run.
-- If you change code, you must git add, git commit, and git push __PUSH_REMOTE__ HEAD:__PUSH_REF__ before finishing.
-- Unpushed local changes will be lost on the next run.
-- Any machine-written business comment must start with: [pr-loop-bot]
+- Do not sleep or wait inside the iteration.
 
-GitHub command hints:
+Persistence by Commit:
+- Every stage must leave behind a pushed commit. Local-only progress does not count as persisted state.
+- The default transient status artifact is repo-root PROGRESS.md. It should contain the stage, current head SHA, work completed, tests run, blockers or next steps, and the intent for the next pass.
+- You may modify normal repo files for experiments or implementation, but transient bot-owned progress artifacts must be removed before the final finished path.
+- If you change code or the progress artifact, you must git add, git commit, and git push __PUSH_REMOTE__ HEAD:__PUSH_REF__ before posting summary comments or emitting a stage result.
+- If push fails or the worktree remains dirty, keep the current stage.
+- Required action order for every pass:
+  1. Commit and push the current pass.
+  2. Post the top-level PR summary comment.
+  3. Post any review replies for addressed feedback.
+  4. Record the new bot comment ids via statectl.sh.
+  5. Record solved external comment ids via statectl.sh.
+  6. Resolve only the threads you actually addressed.
+  7. Emit RESULT_STAGE=...
+
+Helper Commands:
 - Infer repo from git remote:
   REPO=$(git remote get-url origin | sed 's|.*github\.com[/:]||' | sed 's|\.git$||')
 - Check out the PR branch locally:
@@ -58,8 +73,10 @@ GitHub command hints:
 - Get review comments for a specific review:
   REVIEW_ID=$(echo "$CURRENT_HEAD_REVIEW" | jq -r '.id')
   gh api repos/$REPO/pulls/__PR_NUMBER__/reviews/$REVIEW_ID/comments
+- Post the top-level PR summary comment and capture the new comment id:
+  SUMMARY_ID=$(gh api repos/$REPO/issues/__PR_NUMBER__/comments -f body="[pr-loop-bot] <summary>" --jq '.id')
 - Reply to a review comment:
-  gh api repos/$REPO/pulls/__PR_NUMBER__/comments/$COMMENT_ID/replies --field body="<response>"
+  REPLY_ID=$(gh api repos/$REPO/pulls/__PR_NUMBER__/comments/$COMMENT_ID/replies --field body="[pr-loop-bot] <response>" --jq '.id')
 - Query unresolved review threads with GraphQL:
   gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -F pr="__PR_NUMBER__" -f query='
     query($owner: String!, $name: String!, $pr: Int!) {
@@ -94,6 +111,24 @@ GitHub command hints:
   gh pr checks __PR_NUMBER__ --repo "$REPO"
   gh run list --repo "$REPO" --commit "$HEAD_SHA" --json databaseId,name,conclusion,event
   gh run view "$RUN_ID" --repo "$REPO" --log-failed
+- Clear per-pass bot comment ids before recording new ones:
+  __WORKER_DIR__/statectl.sh clear-recent-bot-comments
+- Record the new top-level bot summary comment id after the comment exists:
+  __WORKER_DIR__/statectl.sh add-bot-comment "$SUMMARY_ID"
+- Record the new bot review reply id after the reply exists:
+  __WORKER_DIR__/statectl.sh add-bot-comment "$REPLY_ID"
+- Record addressed external review comments after bot comments are already recorded:
+  __WORKER_DIR__/statectl.sh add-solved-comment <id>
+- Update the next-pass hint when useful:
+  __WORKER_DIR__/statectl.sh set-hint "..."
+- Record the processed head sha if needed:
+  __WORKER_DIR__/statectl.sh set-last-head-sha <sha>
+- Touch state without changing other fields:
+  __WORKER_DIR__/statectl.sh mark-updated
+
+- If there is no Codex review on the current head, or you pushed new commits after the last Codex review, post:
+  @codex please review this PR.
+  Do not post another request if the current head already has an outstanding Codex review and no new commits were added.
 
 Allowed stage transitions:
 - plan -> impl

@@ -72,10 +72,10 @@ test_state_round_trip_and_array_uniqueness() {
   tmpdir=$(mktemp -d)
   state_file="$tmpdir/pr-1.state.json"
   state_write_json "$state_file" "$(default_state_json)"
-  json=$(json_array_add_unique "$(load_state_json "$state_file")" "last_solved_comments" "42")
-  json=$(json_array_add_unique "$json" "last_solved_comments" "42")
+  json=$(json_array_add_unique "$(load_state_json "$state_file")" "last_solved_comment_ids" "42")
+  json=$(json_array_add_unique "$json" "last_solved_comment_ids" "42")
   state_write_json "$state_file" "$json"
-  assert_eq "[42]" "$(jq -c '.last_solved_comments' "$state_file")"
+  assert_eq "[42]" "$(jq -c '.last_solved_comment_ids' "$state_file")"
 }
 
 test_statectl_updates_are_sanitized_and_scoped() {
@@ -98,8 +98,45 @@ test_statectl_updates_are_sanitized_and_scoped() {
 
   state_json=$(load_state_json "$state_file")
   assert_eq "review later" "$(printf '%s\n' "$state_json" | jq -r '.hint')"
-  assert_eq "[5]" "$(printf '%s\n' "$state_json" | jq -c '.last_solved_comments')"
-  assert_eq "[9]" "$(printf '%s\n' "$state_json" | jq -c '.last_solved_subcomments')"
+  assert_eq "[5,9]" "$(printf '%s\n' "$state_json" | jq -c '.last_solved_comment_ids')"
+}
+
+test_statectl_tracks_recent_bot_comment_ids() {
+  local tmpdir state_file lock_file state_json
+  tmpdir=$(mktemp -d)
+  state_file="$tmpdir/pr-3.state.json"
+  lock_file="$tmpdir/pr-3.lock"
+  printf '%s\n' "$$" >"$lock_file"
+  state_write_json "$state_file" "$(default_state_json)"
+
+  (
+    export PR_LOOP_STATE_FILE="$state_file"
+    export PR_LOOP_LOCK_FILE="$lock_file"
+    export PR_LOOP_WORKER_PID="$$"
+    "$ROOT_DIR/statectl.sh" add-bot-comment 101
+    "$ROOT_DIR/statectl.sh" add-bot-comment 101
+    "$ROOT_DIR/statectl.sh" add-bot-comment 205
+    "$ROOT_DIR/statectl.sh" clear-recent-bot-comments
+    "$ROOT_DIR/statectl.sh" add-bot-comment 301
+    "$ROOT_DIR/statectl.sh" add-bot-comment 401
+  )
+
+  state_json=$(load_state_json "$state_file")
+  assert_eq "[301,401]" "$(printf '%s\n' "$state_json" | jq -c '.recent_bot_comment_ids')"
+}
+
+test_load_state_json_migrates_legacy_comment_fields() {
+  local tmpdir state_file state_json
+  tmpdir=$(mktemp -d)
+  state_file="$tmpdir/pr-4.state.json"
+
+  cat >"$state_file" <<'EOF'
+{"hint":"legacy","last_solved_comments":[12],"last_solved_subcomments":[34],"recent_bot_issue_comment_ids":[56],"recent_bot_review_reply_ids":[78],"updated_at":"2026-04-06T00:00:00Z"}
+EOF
+
+  state_json=$(load_state_json "$state_file")
+  assert_eq "[12,34]" "$(printf '%s\n' "$state_json" | jq -c '.last_solved_comment_ids')"
+  assert_eq "[56,78]" "$(printf '%s\n' "$state_json" | jq -c '.recent_bot_comment_ids')"
 }
 
 test_stage_parsing_uses_only_strict_markers() {
@@ -169,7 +206,7 @@ test_build_claude_prompt_renders_standalone_template() {
   local prompt state_json meta_json
 
   state_json=$(cat <<'EOF'
-{"last_solved_comments":[12,34],"last_solved_subcomments":[],"hint":"focus review follow-up"}
+{"last_solved_comment_ids":[12,34],"recent_bot_comment_ids":[88,99,100],"hint":"focus review follow-up"}
 EOF
 )
   meta_json=$(cat <<'EOF'
@@ -185,13 +222,22 @@ EOF
     assert_contains "Stage: review" "$prompt"
     assert_contains "Head SHA: deadbeef" "$prompt"
     assert_contains "Context JSON: /tmp/pr-42.ctx.json" "$prompt"
-    assert_contains "Last solved comments: 12,34" "$prompt"
-    assert_contains "Last solved subcomments: <none>" "$prompt"
+    assert_contains "Recent solved external comments: 12,34" "$prompt"
+    assert_contains "Recent bot comments: 88,99,100" "$prompt"
     assert_contains "Hint: focus review follow-up" "$prompt"
     assert_contains "Continuously resolve GitHub PR #42 by driving the Codex review cycle." "$prompt"
+    assert_contains "Stage Playbook:" "$prompt"
+    assert_contains "Outer Worker Contract:" "$prompt"
+    assert_contains "Persistence by Commit:" "$prompt"
+    assert_contains "Helper Commands:" "$prompt"
+    assert_contains "The default transient status artifact is repo-root PROGRESS.md." "$prompt"
+    assert_contains "Commit and push the current pass." "$prompt"
+    assert_contains "SUMMARY_ID=\$(gh api repos/\$REPO/issues/42/comments -f body=\"[pr-loop-bot] <summary>\" --jq '.id')" "$prompt"
+    assert_contains "$ROOT_DIR/statectl.sh clear-recent-bot-comments" "$prompt"
+    assert_contains "$ROOT_DIR/statectl.sh add-bot-comment \"\$SUMMARY_ID\"" "$prompt"
     assert_contains 'gh pr checkout 42 --repo "$REPO"' "$prompt"
     assert_contains 'gh pr view 42 --repo "$REPO" --json headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup' "$prompt"
-    assert_contains "git push origin HEAD:feature/prompt-template before finishing." "$prompt"
+    assert_contains "git push origin HEAD:feature/prompt-template before posting summary comments or emitting a stage result." "$prompt"
     assert_contains "RESULT_STAGE=finished" "$prompt"
   )
 }
@@ -293,11 +339,12 @@ EOF
 }
 
 test_process_pr_reloads_state_and_recomputes_snapshot() {
-  local tmpdir state_file lock_file final_state expected_snapshot
+  local tmpdir state_file lock_file actions_file final_state expected_snapshot
 
   tmpdir=$(mktemp -d)
   state_file="$tmpdir/pr-7.state.json"
   lock_file="$tmpdir/pr-7.lock"
+  actions_file="$tmpdir/pr-7.actions.log"
   state_write_json "$state_file" "$(default_state_json)"
 
   (
@@ -307,6 +354,7 @@ test_process_pr_reloads_state_and_recomputes_snapshot() {
     export TEST_TMPDIR="$tmpdir"
     export TEST_STATE_FILE="$state_file"
     export TEST_LOCK_FILE="$lock_file"
+    export TEST_ACTIONS_FILE="$actions_file"
     export TEST_POSTED_STAGE=
     export TEST_COLLECT_PHASE=pre
 
@@ -346,7 +394,15 @@ EOF
       export PR_LOOP_STATE_FILE="$TEST_STATE_FILE"
       export PR_LOOP_LOCK_FILE="$TEST_LOCK_FILE"
       export PR_LOOP_WORKER_PID="$$"
+      printf 'post-issue-comment:501\n' >>"$TEST_ACTIONS_FILE"
+      "$ROOT_DIR/statectl.sh" clear-recent-bot-comments >/dev/null
+      printf 'record-bot-issue-comment:501\n' >>"$TEST_ACTIONS_FILE"
+      "$ROOT_DIR/statectl.sh" add-bot-comment 501 >/dev/null
+      printf 'post-review-reply:601\n' >>"$TEST_ACTIONS_FILE"
+      printf 'record-bot-review-reply:601\n' >>"$TEST_ACTIONS_FILE"
+      "$ROOT_DIR/statectl.sh" add-bot-comment 601 >/dev/null
       "$ROOT_DIR/statectl.sh" set-hint "focus reviewer" >/dev/null
+      printf 'record-solved-comment:99\n' >>"$TEST_ACTIONS_FILE"
       "$ROOT_DIR/statectl.sh" add-solved-comment 99 >/dev/null
       printf '%s\n' "impl"
     }
@@ -366,8 +422,10 @@ EOF
 {"state":"OPEN","headRefOid":"abc","stage":"impl","issueComments":[{"id":101,"updatedAt":"2026-04-06T00:02:00Z"}],"reviewComments":[]}
 EOF
 )
+  assert_eq $'post-issue-comment:501\nrecord-bot-issue-comment:501\npost-review-reply:601\nrecord-bot-review-reply:601\nrecord-solved-comment:99' "$(cat "$actions_file")"
   assert_eq "focus reviewer" "$(printf '%s\n' "$final_state" | jq -r '.hint')"
-  assert_eq "[99]" "$(printf '%s\n' "$final_state" | jq -c '.last_solved_comments')"
+  assert_eq "[99]" "$(printf '%s\n' "$final_state" | jq -c '.last_solved_comment_ids')"
+  assert_eq "[501,601]" "$(printf '%s\n' "$final_state" | jq -c '.recent_bot_comment_ids')"
   assert_eq "2026-04-06T00:02:00Z" "$(printf '%s\n' "$final_state" | jq -r '.last_pr_updated_at')"
   assert_eq "$expected_snapshot" "$(printf '%s\n' "$final_state" | jq -r '.last_snapshot')"
 }
@@ -379,6 +437,8 @@ main() {
   run_test test_repo_slug_parsing
   run_test test_state_round_trip_and_array_uniqueness
   run_test test_statectl_updates_are_sanitized_and_scoped
+  run_test test_statectl_tracks_recent_bot_comment_ids
+  run_test test_load_state_json_migrates_legacy_comment_fields
   run_test test_stage_parsing_uses_only_strict_markers
   run_test test_snapshot_changes_when_review_reply_changes
   run_test test_validate_stage_transition_rules

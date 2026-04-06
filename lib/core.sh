@@ -122,7 +122,7 @@ issue_scan_lock_file() {
 
 default_state_json() {
   cat <<'EOF'
-{"last_solved_comments":[],"last_solved_subcomments":[],"last_head_sha":"","last_snapshot":"","last_pr_updated_at":"","hint":"","updated_at":""}
+{"hint":"","last_head_sha":"","last_pr_updated_at":"","last_snapshot":"","last_solved_comment_ids":[],"recent_bot_comment_ids":[],"updated_at":""}
 EOF
 }
 
@@ -136,7 +136,26 @@ load_state_json() {
   fi
 
   if jq -e . "$file" >/dev/null 2>&1; then
-    jq -cS . "$file"
+    jq -cS '
+      .last_solved_comment_ids = (
+        ((.last_solved_comment_ids // [])
+        + (.last_solved_comments // [])
+        + (.last_solved_subcomments // []))
+        | unique
+      )
+      | .recent_bot_comment_ids = (
+        ((.recent_bot_comment_ids // [])
+        + (.recent_bot_issue_comment_ids // [])
+        + (.recent_bot_review_reply_ids // []))
+        | unique
+      )
+      | del(
+          .last_solved_comments,
+          .last_solved_subcomments,
+          .recent_bot_issue_comment_ids,
+          .recent_bot_review_reply_ids
+        )
+    ' "$file"
     return 0
   fi
 

@@ -33,6 +33,16 @@ write_state_json() {
   state_write_json "$PR_LOOP_STATE_FILE" "$next_json"
 }
 
+write_array_add_unique() {
+  local field=$1
+  local raw_value=$2
+
+  write_state_json "$(
+    json_array_add_unique "$(load_state_json "$PR_LOOP_STATE_FILE")" "$field" "$raw_value" \
+      | jq -c --arg updated_at "$(now_utc)" '.updated_at = $updated_at'
+  )"
+}
+
 cmd_set_hint() {
   local hint
   hint=$(sanitize_hint "${1:-}")
@@ -46,21 +56,40 @@ cmd_set_hint() {
 cmd_add_solved_comment() {
   local comment_id=$1
   [[ "$comment_id" =~ ^[0-9]+$ ]] || die "comment id must be numeric"
-  log_info "recording solved top-level comment id=$comment_id"
-  write_state_json "$(
-    json_array_add_unique "$(load_state_json "$PR_LOOP_STATE_FILE")" "last_solved_comments" "$comment_id" \
-      | jq -c --arg updated_at "$(now_utc)" '.updated_at = $updated_at'
-  )"
+  log_info "recording solved external comment id=$comment_id"
+  write_array_add_unique "last_solved_comment_ids" "$comment_id"
 }
 
 cmd_add_solved_subcomment() {
   local comment_id=$1
   [[ "$comment_id" =~ ^[0-9]+$ ]] || die "subcomment id must be numeric"
-  log_info "recording solved subcomment id=$comment_id"
-  write_state_json "$(
-    json_array_add_unique "$(load_state_json "$PR_LOOP_STATE_FILE")" "last_solved_subcomments" "$comment_id" \
-      | jq -c --arg updated_at "$(now_utc)" '.updated_at = $updated_at'
-  )"
+  log_info "recording solved external subcomment id=$comment_id"
+  write_array_add_unique "last_solved_comment_ids" "$comment_id"
+}
+
+cmd_add_bot_comment() {
+  local comment_id=$1
+  [[ "$comment_id" =~ ^[0-9]+$ ]] || die "bot comment id must be numeric"
+  log_info "recording recent bot comment id=$comment_id"
+  write_array_add_unique "recent_bot_comment_ids" "$comment_id"
+}
+
+cmd_add_bot_issue_comment() {
+  local comment_id=$1
+  cmd_add_bot_comment "$comment_id"
+}
+
+cmd_add_bot_review_reply() {
+  local comment_id=$1
+  cmd_add_bot_comment "$comment_id"
+}
+
+cmd_clear_recent_bot_comments() {
+  log_info "clearing recent bot comment ids"
+  write_state_json "$(load_state_json "$PR_LOOP_STATE_FILE" | jq -c --arg updated_at "$(now_utc)" '
+    .recent_bot_comment_ids = []
+    | .updated_at = $updated_at
+  ')"
 }
 
 cmd_set_last_head_sha() {
@@ -95,6 +124,18 @@ main() {
       ;;
     add-solved-subcomment)
       cmd_add_solved_subcomment "${1:-}"
+      ;;
+    add-bot-comment)
+      cmd_add_bot_comment "${1:-}"
+      ;;
+    add-bot-issue-comment)
+      cmd_add_bot_issue_comment "${1:-}"
+      ;;
+    add-bot-review-reply)
+      cmd_add_bot_review_reply "${1:-}"
+      ;;
+    clear-recent-bot-comments)
+      cmd_clear_recent_bot_comments
       ;;
     set-last-head-sha)
       cmd_set_last_head_sha "${1:-}"

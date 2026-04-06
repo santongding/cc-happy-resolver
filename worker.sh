@@ -87,11 +87,12 @@ build_claude_prompt() {
   local state_json=$4
   local ctx_file=$5
   local meta_json=$6
-  local solved_comments solved_subcomments hint title url push_remote push_ref
+  local solved_comment_ids recent_bot_comment_ids
+  local hint title url push_remote push_ref
   local template_file prompt
 
-  solved_comments=$(printf '%s\n' "$state_json" | jq -r '[.last_solved_comments[]? | tostring] | join(",")')
-  solved_subcomments=$(printf '%s\n' "$state_json" | jq -r '[.last_solved_subcomments[]? | tostring] | join(",")')
+  solved_comment_ids=$(printf '%s\n' "$state_json" | jq -r '[.last_solved_comment_ids[]? | tostring] | join(",")')
+  recent_bot_comment_ids=$(printf '%s\n' "$state_json" | jq -r '[.recent_bot_comment_ids[]? | tostring] | join(",")')
   hint=$(printf '%s\n' "$state_json" | jq -r '.hint // ""')
   title=$(printf '%s\n' "$meta_json" | jq -r '.title // ""')
   url=$(printf '%s\n' "$meta_json" | jq -r '.htmlUrl // ""')
@@ -108,8 +109,8 @@ build_claude_prompt() {
   prompt=${prompt//__STAGE__/$stage}
   prompt=${prompt//__HEAD_SHA__/$head_sha}
   prompt=${prompt//__CONTEXT_JSON__/$ctx_file}
-  prompt=${prompt//__LAST_SOLVED_COMMENTS__/${solved_comments:-<none>}}
-  prompt=${prompt//__LAST_SOLVED_SUBCOMMENTS__/${solved_subcomments:-<none>}}
+  prompt=${prompt//__LAST_SOLVED_COMMENT_IDS__/${solved_comment_ids:-<none>}}
+  prompt=${prompt//__RECENT_BOT_COMMENT_IDS__/${recent_bot_comment_ids:-<none>}}
   prompt=${prompt//__HINT__/${hint:-<none>}}
   prompt=${prompt//__PUSH_REMOTE__/$push_remote}
   prompt=${prompt//__PUSH_REF__/$push_ref}
