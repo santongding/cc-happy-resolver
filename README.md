@@ -162,7 +162,7 @@ Use it in a dedicated repository checkout, not in a working tree with local chan
 
 ## Related PR Detection
 
-An issue is considered to already have a related PR if any open PR matches one of these:
+An issue is considered to already have a related PR if any PR, including closed or merged PRs, matches one of these:
 
 - the head branch is `cc-happy/issue-<number>`
 - the PR title mentions `#<number>`
@@ -215,4 +215,3 @@ Key files:
 4. If its snapshot or stage changed, the worker runs one Claude pass.
 5. The pass records the next stage with `statectl.sh`.
 6. The worker posts the new stage marker if needed and saves updated state.
-

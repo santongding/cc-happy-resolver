@@ -73,6 +73,31 @@ test_repo_slug_parsing() {
   )
 }
 
+test_git_checkout_detached_head_releases_branch() {
+  local tmpdir current_branch detached_head branch_head
+  tmpdir=$(mktemp -d)
+
+  (
+    cd "$tmpdir"
+    git init -q
+    git config user.name Tester
+    git config user.email tester@example.com
+    git checkout -b main >/dev/null
+    printf 'hello\n' > README.md
+    git add README.md
+    git commit -m init >/dev/null
+
+    current_branch=$(git symbolic-ref --short HEAD)
+    git_checkout_detached_head
+    detached_head=$(git symbolic-ref -q --short HEAD || true)
+    branch_head=$(git rev-parse refs/heads/main)
+
+    assert_eq "main" "$current_branch"
+    assert_eq "" "$detached_head"
+    assert_eq "$branch_head" "$(git rev-parse HEAD)"
+  )
+}
+
 test_state_round_trip_and_array_uniqueness() {
   local tmpdir state_file json
   tmpdir=$(mktemp -d)
@@ -564,6 +589,55 @@ test_prepare_pr_workspace_uses_pr_head_branch_for_forks() {
   assert_eq $'remote get-url pr-loop-head-77\nremote add pr-loop-head-77 https://github.com/octo/fork.git\nfetch pr-loop-head-77 refs/heads/feature/fork-branch:refs/remotes/pr-loop-head-77/feature/fork-branch\ncheckout -B feature/fork-branch refs/remotes/pr-loop-head-77/feature/fork-branch\nreset --hard\nclean -ffd' "$(cat "$actions_file")"
 }
 
+test_worker_cleanup_detaches_head_after_processing() {
+  local tmpdir repo original_head current_branch
+  tmpdir=$(mktemp -d)
+  repo="$tmpdir/repo"
+  mkdir -p "$repo"
+
+  (
+    cd "$repo"
+    git init -q
+    git config user.name Tester
+    git config user.email tester@example.com
+    git remote add origin https://github.com/acme/demo.git
+    git checkout -b main >/dev/null
+    printf 'base\n' > README.md
+    git add README.md
+    git commit -m init >/dev/null
+    original_head=$(git rev-parse HEAD)
+    export PR_LOOP_STATE_ROOT="$tmpdir/state"
+
+    STATE_FILE=
+    LOCK_FILE=
+    LOCK_ACQUIRED=0
+    CTX_FILE=
+    PROMPT_FILE=
+    CLAUDE_STDOUT_FILE=
+    CLAUDE_STDERR_FILE=
+    CLAUDE_REQUESTED_STAGE=
+
+    log_info() { :; }
+    log_warn() { :; }
+    log_error() { :; }
+    gh_pr_meta() { printf '%s\n' '{"number":7,"state":"OPEN","updatedAt":"2026-04-06T00:00:00Z","headRefOid":"abc","headRefName":"feature/test","headRepositoryCloneUrl":"https://github.com/acme/demo.git","isCrossRepository":false}'; }
+    gh_collect_context() { printf '%s\n' '{"meta":{"state":"OPEN","headRefOid":"abc","updatedAt":"2026-04-06T00:00:00Z"},"issueComments":[],"reviewComments":[],"reviews":[]}'; }
+    gh_pr_stage() { printf 'plan\n'; }
+    gh_pr_snapshot() { printf 'snapshot-1\n'; }
+    gh_write_context_cache() { :; }
+    gh_prepare_pr_workspace() { git checkout -B feature/test HEAD >/dev/null; }
+    run_claude_for_pr() { CLAUDE_REQUESTED_STAGE=plan; }
+    gh_post_stage_marker() { :; }
+
+    process_pr 7
+    cleanup >/dev/null
+
+    current_branch=$(git symbolic-ref -q --short HEAD || true)
+    assert_eq "" "$current_branch"
+    assert_eq "$original_head" "$(git rev-parse HEAD)"
+  )
+}
+
 test_run_claude_for_pr_streams_output_to_stdout() {
   local tmpdir stdout_file stderr_file
   tmpdir=$(mktemp -d)
@@ -668,7 +742,7 @@ test_scan_open_issues_creates_missing_prs_only() {
 [{"number":1,"title":"First issue","body":"Issue body for PR 1","updatedAt":"2026-04-06T00:00:00Z"},{"number":2,"title":"Second issue","body":"Issue body for PR 2","updatedAt":"2026-04-06T00:00:00Z"}]
 EOF
     }
-    gh_list_open_prs() { printf '%s\n' "$TEST_PRS_JSON"; }
+    gh_list_all_prs() { printf '%s\n' "$TEST_PRS_JSON"; }
     gh_repo_default_branch() { printf '%s\n' "main"; }
     gh_seed_issue_branch() {
       printf 'seed:%s:%s\n' "$1" "$2" >>"$TEST_ACTIONS_FILE"
@@ -683,6 +757,42 @@ EOF
   )
 
   assert_eq $'seed:1:main\npr:1:First issue:Issue body for PR 1:main' "$(cat "$actions_file")"
+}
+
+test_scan_open_issues_treats_closed_related_pr_as_existing() {
+  local tmpdir actions_file
+  tmpdir=$(mktemp -d)
+  actions_file="$tmpdir/actions.log"
+  : >"$actions_file"
+
+  (
+    source "$ROOT_DIR/issue-scan.sh"
+    export PR_LOOP_LOG_REPO=test__repo
+    export TEST_ISSUES_LOCK="$tmpdir/issues.lock"
+    export TEST_ACTIONS_FILE="$actions_file"
+    export TEST_PRS_JSON='[{"number":300,"state":"CLOSED","headRefName":"cc-happy/issue-34","title":"Seeded earlier","body":""}]'
+
+    issue_scan_lock_file() { printf '%s\n' "$TEST_ISSUES_LOCK"; }
+    acquire_lock() { printf '%s\n' "$$" >"$1"; return 0; }
+    release_lock() { rm -f "$1"; return 0; }
+    gh_list_open_issues() {
+      cat <<'EOF'
+[{"number":34,"title":"Still open issue","body":"Issue body","updatedAt":"2026-04-06T00:00:00Z"}]
+EOF
+    }
+    gh_list_all_prs() { printf '%s\n' "$TEST_PRS_JSON"; }
+    gh_repo_default_branch() { printf '%s\n' "main"; }
+    gh_seed_issue_branch() {
+      printf 'seed:%s:%s\n' "$1" "$2" >>"$TEST_ACTIONS_FILE"
+    }
+    gh_create_issue_pr() {
+      printf 'pr:%s:%s:%s:%s\n' "$1" "$2" "$3" "$4" >>"$TEST_ACTIONS_FILE"
+    }
+
+    scan_open_issues
+  )
+
+  assert_eq "" "$(cat "$actions_file")"
 }
 
 test_make_install_copies_prompt_template_and_skill() {
@@ -804,6 +914,7 @@ main() {
   bash -n "$ROOT_DIR/pr-loop.sh" "$ROOT_DIR/issue-scan.sh" "$ROOT_DIR/worker.sh" "$ROOT_DIR/statectl.sh" "$ROOT_DIR/lib/core.sh" "$ROOT_DIR/lib/gh.sh"
 
   run_test test_repo_slug_parsing
+  run_test test_git_checkout_detached_head_releases_branch
   run_test test_state_round_trip_and_array_uniqueness
   run_test test_statectl_updates_are_sanitized_and_scoped
   run_test test_statectl_rolls_stage_state
@@ -823,9 +934,11 @@ main() {
   run_test test_seed_issue_branch_creates_plan_branch_from_default
   run_test test_prepare_pr_workspace_uses_pr_head_branch_for_same_repo
   run_test test_prepare_pr_workspace_uses_pr_head_branch_for_forks
+  run_test test_worker_cleanup_detaches_head_after_processing
   run_test test_run_claude_for_pr_streams_output_to_stdout
   run_test test_run_claude_for_pr_filters_stream_json_output
   run_test test_scan_open_issues_creates_missing_prs_only
+  run_test test_scan_open_issues_treats_closed_related_pr_as_existing
   run_test test_make_install_copies_prompt_template_and_skill
   run_test test_process_pr_runs_next_stage_even_when_metadata_and_snapshot_are_unchanged
   run_test test_process_pr_reloads_state_and_recomputes_snapshot

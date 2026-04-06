@@ -31,7 +31,7 @@ scan_open_issues() {
       exit 0
     fi
 
-    prs_json=$(gh_list_open_prs)
+    prs_json=$(gh_list_all_prs)
     default_branch=$(gh_repo_default_branch)
     [[ -n "$default_branch" ]] || die "failed to determine default branch"
     log_info "issue scan will seed missing PRs from default branch $default_branch"
@@ -52,11 +52,11 @@ scan_open_issues() {
       if gh_seed_issue_branch "$issue_number" "$default_branch" \
         && gh_create_issue_pr "$issue_number" "$issue_title" "$issue_body" "$default_branch"; then
         log_info "created seed PR for issue #$issue_number"
-        prs_json=$(gh_list_open_prs)
+        prs_json=$(gh_list_all_prs)
         continue
       fi
 
-      prs_json=$(gh_list_open_prs)
+      prs_json=$(gh_list_all_prs)
       related_pr=$(gh_find_related_pr_number "$issue_number" "$prs_json")
       if [[ -n "$related_pr" ]]; then
         log_info "issue #$issue_number gained related PR #$related_pr during creation attempt"
@@ -78,6 +78,7 @@ scan_open_issues() {
 main() {
   require_cmd bash git jq gh
   assert_repo_root
+  git_checkout_detached_head
   ensure_repo_state_dir >/dev/null
   export PR_LOOP_LOG_REPO="$(repo_key)"
   log_info "starting issue scan in repo $(pwd -P)"

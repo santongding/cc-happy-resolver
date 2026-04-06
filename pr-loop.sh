@@ -48,6 +48,7 @@ main() {
 
   require_cmd bash git jq gh
   assert_repo_root
+  git_checkout_detached_head
   ensure_repo_state_dir >/dev/null
   export PR_LOOP_LOG_REPO="$(repo_key)"
   log_info "starting loop at $(pwd -P) with poll interval ${interval}s${once:+ (once mode=$once)}"

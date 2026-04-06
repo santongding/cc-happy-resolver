@@ -72,6 +72,34 @@ gh_list_open_prs() {
   '
 }
 
+gh_list_all_prs() {
+  local slug
+  slug=$(repo_slug) || return 1
+  log_info "listing all PRs for $slug"
+
+  gh_api_with_retry --paginate --slurp "repos/$slug/pulls?state=all&per_page=100" | jq -c '
+    [
+      .[][]? | {
+        number,
+        state: ((.state // "") | ascii_upcase),
+        updatedAt: (.updated_at // ""),
+        headRefOid: (.head.sha // ""),
+        headRefName: (.head.ref // ""),
+        headRepositoryName: (.head.repo.name // ""),
+        headRepositoryOwner: (.head.repo.owner.login // ""),
+        headRepositoryCloneUrl: (.head.repo.clone_url // ""),
+        baseRepositoryName: (.base.repo.name // ""),
+        baseRepositoryOwner: (.base.repo.owner.login // ""),
+        maintainerCanModify: (.maintainer_can_modify // false),
+        isCrossRepository: ((.head.repo.full_name // "") != (.base.repo.full_name // "")),
+        title: (.title // ""),
+        body: (.body // ""),
+        htmlUrl: (.html_url // "")
+      }
+    ]
+  '
+}
+
 gh_list_open_issues() {
   local slug
   slug=$(repo_slug) || return 1

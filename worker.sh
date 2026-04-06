@@ -29,6 +29,10 @@ cleanup() {
   [[ -n "${CLAUDE_STDERR_FILE:-}" && -f "${CLAUDE_STDERR_FILE:-}" ]] && rm -f "$CLAUDE_STDERR_FILE"
   [[ -n "${CTX_FILE:-}" && -f "${CTX_FILE:-}" ]] && rm -f "$CTX_FILE"
 
+  if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    git_checkout_detached_head || true
+  fi
+
   if [[ "${LOCK_ACQUIRED:-0}" == "1" && -n "${LOCK_FILE:-}" ]]; then
     log_info "releasing lock $LOCK_FILE"
     release_lock "$LOCK_FILE" || true
@@ -328,6 +332,7 @@ main() {
 
   require_cmd bash git jq gh tee awk mktemp
   assert_repo_root
+  git_checkout_detached_head
   ensure_repo_state_dir >/dev/null
   export PR_LOOP_LOG_REPO="$(repo_key)"
   log_info "worker starting in repo $(pwd -P)"

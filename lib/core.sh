@@ -88,6 +88,24 @@ assert_repo_root() {
   repo_slug >/dev/null
 }
 
+git_checkout_detached_head() {
+  local current_branch current_head
+
+  current_branch=$(git symbolic-ref -q --short HEAD 2>/dev/null || true)
+  if [[ -z "$current_branch" ]]; then
+    log_info "git HEAD is already detached"
+    return 0
+  fi
+
+  current_head=$(git rev-parse --verify HEAD 2>/dev/null) || {
+    die "failed to resolve HEAD before detaching"
+    return 1
+  }
+
+  log_info "detaching git HEAD from branch $current_branch at ${current_head:0:12}"
+  git checkout --detach "$current_head" >/dev/null
+}
+
 repo_key() {
   local slug
   slug=$(repo_slug) || return 1
