@@ -9,7 +9,7 @@ PR_LOOP_LOG_MODULE=issue-scan
 
 scan_open_issues() {
   local issues_json prs_json issue_count default_branch lock_file
-  local issue_json issue_number issue_title related_pr scanner_locked=0
+  local issue_json issue_number issue_title issue_body related_pr scanner_locked=0
   local scan_status=0
 
   lock_file=$(issue_scan_lock_file)
@@ -40,6 +40,7 @@ scan_open_issues() {
       [[ -n "$issue_json" ]] || continue
       issue_number=$(jq -r '.number' <<<"$issue_json")
       issue_title=$(jq -r '.title // ""' <<<"$issue_json")
+      issue_body=$(jq -r '.body // ""' <<<"$issue_json")
       related_pr=$(gh_find_related_pr_number "$issue_number" "$prs_json")
 
       if [[ -n "$related_pr" ]]; then
@@ -49,7 +50,7 @@ scan_open_issues() {
 
       log_info "issue #$issue_number has no related PR; seeding branch and creating PR"
       if gh_seed_issue_branch "$issue_number" "$default_branch" \
-        && gh_create_issue_pr "$issue_number" "$issue_title" "$default_branch"; then
+        && gh_create_issue_pr "$issue_number" "$issue_title" "$issue_body" "$default_branch"; then
         log_info "created seed PR for issue #$issue_number"
         prs_json=$(gh_list_open_prs)
         continue

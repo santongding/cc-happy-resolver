@@ -235,7 +235,7 @@ test_scan_open_issues_creates_missing_prs_only() {
     release_lock() { rm -f "$1"; return 0; }
     gh_list_open_issues() {
       cat <<'EOF'
-[{"number":1,"title":"First issue","body":"","updatedAt":"2026-04-06T00:00:00Z"},{"number":2,"title":"Second issue","body":"","updatedAt":"2026-04-06T00:00:00Z"}]
+[{"number":1,"title":"First issue","body":"Issue body for PR 1","updatedAt":"2026-04-06T00:00:00Z"},{"number":2,"title":"Second issue","body":"Issue body for PR 2","updatedAt":"2026-04-06T00:00:00Z"}]
 EOF
     }
     gh_list_open_prs() { printf '%s\n' "$TEST_PRS_JSON"; }
@@ -244,15 +244,15 @@ EOF
       printf 'seed:%s:%s\n' "$1" "$2" >>"$TEST_ACTIONS_FILE"
     }
     gh_create_issue_pr() {
-      printf 'pr:%s:%s:%s\n' "$1" "$2" "$3" >>"$TEST_ACTIONS_FILE"
-      TEST_PRS_JSON='[{"number":200,"headRefName":"cc-happy/issue-2","title":"Existing seed","body":""},{"number":201,"headRefName":"cc-happy/issue-1","title":"Issue #1: First issue","body":"Closes #1"}]'
+      printf 'pr:%s:%s:%s:%s\n' "$1" "$2" "$3" "$4" >>"$TEST_ACTIONS_FILE"
+      TEST_PRS_JSON='[{"number":200,"headRefName":"cc-happy/issue-2","title":"Existing seed","body":""},{"number":201,"headRefName":"cc-happy/issue-1","title":"First issue","body":"Issue body for PR 1"}]'
       export TEST_PRS_JSON
     }
 
     scan_open_issues
   )
 
-  assert_eq $'seed:1:main\npr:1:First issue:main' "$(cat "$actions_file")"
+  assert_eq $'seed:1:main\npr:1:First issue:Issue body for PR 1:main' "$(cat "$actions_file")"
 }
 
 test_process_pr_reloads_state_and_recomputes_snapshot() {

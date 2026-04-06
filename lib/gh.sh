@@ -150,8 +150,9 @@ gh_seed_issue_branch() {
 gh_create_issue_pr() {
   local issue_number=$1
   local issue_title=$2
-  local default_branch=$3
-  local branch_name=${4:-}
+  local issue_body=$3
+  local default_branch=$4
+  local branch_name=${5:-}
   local pr_title pr_body sanitized_title
 
   if [[ -z "$branch_name" ]]; then
@@ -159,13 +160,8 @@ gh_create_issue_pr() {
   fi
 
   sanitized_title=$(printf '%s' "$issue_title" | tr '\r\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')
-  pr_title="Issue #$issue_number: ${sanitized_title:-Untitled issue}"
-  pr_body=$(cat <<EOF
-Closes #$issue_number
-
-[pr-loop-bot] Seed PR created automatically for issue #$issue_number.
-EOF
-)
+  pr_title=${sanitized_title:-Issue #$issue_number}
+  pr_body=${issue_body-}
 
   log_info "creating PR for issue #$issue_number base=$default_branch head=$branch_name"
   gh pr create --base "$default_branch" --head "$branch_name" --title "$pr_title" --body "$pr_body"
