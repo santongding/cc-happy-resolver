@@ -8,19 +8,7 @@ Context JSON: __CONTEXT_JSON__
 Recent solved external comments: __LAST_SOLVED_COMMENT_IDS__
 Recent bot comments: __RECENT_BOT_COMMENT_IDS__
 Hint: __HINT__
+Statectl Path: __WORKER_DIR__/statectl.sh
+Push Command: git push __PUSH_REMOTE__ HEAD:__PUSH_REF__
 
 Use the installed Claude skill `cc-happy-resolver`.
-
-Runtime specifics for this pass:
-- `statectl.sh` is at `__WORKER_DIR__/statectl.sh`.
-- Push any required commit before posting comments with:
-  `git push __PUSH_REMOTE__ HEAD:__PUSH_REF__`
-- Use the prompt data above and the current context JSON to avoid duplicate work and duplicate comments.
-- Only require code review when in `review` stage.
-- Exit after one pass; Ralph is responsible for the next iteration.
-
-Final line must be exactly one of:
-RESULT_STAGE=plan
-RESULT_STAGE=impl
-RESULT_STAGE=review
-RESULT_STAGE=finished

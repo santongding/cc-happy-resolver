@@ -4,7 +4,8 @@ Shared setup for every stage:
 - Infer the repo from `git remote`.
 - Check out the PR branch and verify you are operating on the current PR head.
 - Read PR metadata, the current head SHA, current-head review state, unresolved review threads, and CI state for the current head.
-- Use the provided context JSON path, recent solved external comment ids, recent bot comment ids, and hint to avoid repeating work.
+- Use the provided context JSON path, recent solved external comment ids, recent bot comment ids, and hint to avoid repeating work and duplicate comments.
+- Use the prompt-provided `statectl.sh` path for all state updates. Do not hard-code a different path.
 
 Worker contract:
 - `worker.sh` owns workspace preparation, reruns, and legal stage transitions. You own exactly one pass and must not sleep or wait.

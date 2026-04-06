@@ -238,12 +238,9 @@ EOF
     assert_contains "Recent solved external comments: 12,34" "$prompt"
     assert_contains "Recent bot comments: 88,99,100" "$prompt"
     assert_contains "Hint: focus review follow-up" "$prompt"
+    assert_contains "Statectl Path: $ROOT_DIR/statectl.sh" "$prompt"
+    assert_contains "Push Command: git push origin HEAD:feature/prompt-template" "$prompt"
     assert_contains 'Use the installed Claude skill `cc-happy-resolver`.' "$prompt"
-    assert_contains "$ROOT_DIR/statectl.sh" "$prompt"
-    assert_contains 'Use the prompt data above and the current context JSON to avoid duplicate work and duplicate comments.' "$prompt"
-    assert_contains 'git push origin HEAD:feature/prompt-template' "$prompt"
-    assert_contains 'Only require code review when in `review` stage.' "$prompt"
-    assert_contains "RESULT_STAGE=finished" "$prompt"
   )
 }
 
@@ -532,6 +529,7 @@ test_make_install_copies_prompt_template_and_skill() {
   [[ -f "$skillsdir/cc-happy-resolver/SKILL.md" ]] || fail "expected installed Claude skill"
   [[ -f "$skillsdir/cc-happy-resolver/plan.md" ]] || fail "expected installed plan stage skill"
   [[ -f "$skillsdir/cc-happy-resolver/next-stage.md" ]] || fail "expected installed next stage skill"
+  [[ -f "$skillsdir/cc-happy-resolver/exit.md" ]] || fail "expected installed exit skill"
   [[ -f "$skillsdir/cc-happy-resolver/gh-helper-commands.md" ]] || fail "expected installed helper commands skill"
   assert_eq "$(cat "$ROOT_DIR/skills/cc-happy-resolver/SKILL.md")" "$(cat "$skillsdir/cc-happy-resolver/SKILL.md")"
 }

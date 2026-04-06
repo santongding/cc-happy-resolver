@@ -4,7 +4,7 @@ Comment and persistence rules:
 - Every stage must leave behind a pushed commit. Local-only progress does not count as persisted state.
 - The default transient status artifact is repo-root `PROGRESS.md`. It should contain the stage, work completed, tests run, blockers or next steps, and the intent for the next pass.
 - You may modify normal repo files for experiments or implementation, but transient bot-owned progress artifacts must be removed before the final finished path.
-- If you change code or the progress artifact, you must `git add`, `git commit`, and `git push` before posting summary comments or emitting a stage result.
+- If you change code or the progress artifact, you must `git add`, `git commit`, and run the prompt-provided push command before posting summary comments or emitting a stage result.
 - If push fails or the worktree remains dirty, keep the current stage.
 
 Required action order for every pass:
