@@ -648,19 +648,20 @@ done
 
 ## 11. Git 工作区与代码推送策略（Critical）
 
-建议统一使用 GitHub pull ref：
+建议统一直接检出 PR 的 head branch：
 
 ```bash
-git fetch origin pull/<pr>/head:refs/remotes/origin/pr-loop/<pr>
-git checkout -B pr-loop/<pr> refs/remotes/origin/pr-loop/<pr>
+git fetch <head-remote> refs/heads/<head-branch>:refs/remotes/<head-remote>/<head-branch>
+git checkout -B <head-branch> refs/remotes/<head-remote>/<head-branch>
 git reset --hard
 git clean -ffd
 ```
 
 ### 优点
 
-- 不需要关心 PR 是否来自 fork
-- 不需要手动解析 head repo / head branch
+- Bot 本地工作分支与 PR branch 保持一致
+- 提交、推送、排查问题时不再混入额外的临时分支名
+- 对同仓库 PR 与 fork PR 都可以统一处理
 - 能稳定切到 PR 当前代码
 - 强制清理工作区，减少脏状态影响
 

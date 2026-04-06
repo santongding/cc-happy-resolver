@@ -15,6 +15,7 @@ CTX_FILE=
 PROMPT_FILE=
 CLAUDE_STDOUT_FILE=
 CLAUDE_STDERR_FILE=
+CLAUDE_REQUESTED_STAGE=
 
 cleanup() {
   local status=$?
@@ -127,14 +128,20 @@ run_claude_for_pr() {
   local ctx_file=$5
   local meta_json=$6
   local claude_cmd exit_code result_line
+  local stdout_pipe stderr_pipe stdout_tee_pid stderr_tee_pid
 
   PROMPT_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-loop.prompt.XXXXXX")
   CLAUDE_STDOUT_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stdout.XXXXXX")
   CLAUDE_STDERR_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stderr.XXXXXX")
+  stdout_pipe=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stdout.pipe.XXXXXX")
+  stderr_pipe=$(mktemp "${TMPDIR:-/tmp}/pr-loop.stderr.pipe.XXXXXX")
+  rm -f "$stdout_pipe" "$stderr_pipe"
+  mkfifo "$stdout_pipe" "$stderr_pipe"
 
   build_claude_prompt "$pr_number" "$stage" "$head_sha" "$state_json" "$ctx_file" "$meta_json" >"$PROMPT_FILE"
 
   claude_cmd=${PR_LOOP_CLAUDE_CMD:-claude -p}
+  CLAUDE_REQUESTED_STAGE=$stage
   export PR_LOOP_PR_NUMBER="$pr_number"
   export PR_LOOP_LOCK_FILE="$LOCK_FILE"
   export PR_LOOP_WORKER_PID="$$"
@@ -143,10 +150,17 @@ run_claude_for_pr() {
 
   log_info "starting Claude runner command=${claude_cmd} prompt_file=$PROMPT_FILE"
 
+  tee "$CLAUDE_STDOUT_FILE" <"$stdout_pipe" &
+  stdout_tee_pid=$!
+  tee "$CLAUDE_STDERR_FILE" <"$stderr_pipe" &
+  stderr_tee_pid=$!
+
   set +e
-  bash -lc "$claude_cmd" <"$PROMPT_FILE" > >(tee "$CLAUDE_STDOUT_FILE") 2> >(tee "$CLAUDE_STDERR_FILE" >&2)
+  bash -lc "$claude_cmd" <"$PROMPT_FILE" >"$stdout_pipe" 2>"$stderr_pipe"
   exit_code=$?
   set -e
+  wait "$stdout_tee_pid" "$stderr_tee_pid"
+  rm -f "$stdout_pipe" "$stderr_pipe"
 
   result_line=$(awk 'NF { line = $0 } END { print line }' "$CLAUDE_STDOUT_FILE")
   if [[ $exit_code -ne 0 ]]; then
@@ -155,12 +169,12 @@ run_claude_for_pr() {
 
   if [[ "$result_line" =~ ^RESULT_STAGE=(plan|impl|review|finished)$ ]]; then
     log_info "Claude requested stage ${BASH_REMATCH[1]}"
-    printf '%s\n' "${BASH_REMATCH[1]}"
+    CLAUDE_REQUESTED_STAGE=${BASH_REMATCH[1]}
     return 0
   fi
 
   log_warn "Claude did not emit a valid RESULT_STAGE line; keeping current stage"
-  printf '%s\n' "$stage"
+  CLAUDE_REQUESTED_STAGE=$stage
 }
 
 validate_stage_transition() {
@@ -243,7 +257,8 @@ process_pr() {
 
   gh_prepare_pr_workspace "$pr_number" "$meta_json"
   head_sha=$(printf '%s\n' "$meta_json" | jq -r '.headRefOid // ""')
-  requested_stage=$(run_claude_for_pr "$pr_number" "$current_stage" "$head_sha" "$state_json" "$CTX_FILE" "$meta_json")
+  run_claude_for_pr "$pr_number" "$current_stage" "$head_sha" "$state_json" "$CTX_FILE" "$meta_json"
+  requested_stage=${CLAUDE_REQUESTED_STAGE:-$current_stage}
 
   dirty_flag=0
   if git_worktree_dirty; then

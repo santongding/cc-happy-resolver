@@ -301,6 +301,80 @@ test_seed_issue_branch_creates_plan_branch_from_default() {
   )
 }
 
+test_prepare_pr_workspace_uses_pr_head_branch_for_same_repo() {
+  local tmpdir actions_file meta_json
+  tmpdir=$(mktemp -d)
+  actions_file="$tmpdir/actions.log"
+  meta_json='{"number":42,"headRefName":"feature/same-branch","headRepositoryCloneUrl":"https://github.com/acme/demo.git","isCrossRepository":false}'
+
+  (
+    source "$ROOT_DIR/lib/gh.sh"
+    export TEST_ACTIONS_FILE="$actions_file"
+
+    git() {
+      printf '%s\n' "$*" >>"$TEST_ACTIONS_FILE"
+      return 0
+    }
+
+    gh_prepare_pr_workspace 42 "$meta_json"
+
+    assert_eq "origin" "$PR_LOOP_PUSH_REMOTE"
+    assert_eq "feature/same-branch" "$PR_LOOP_PUSH_REF"
+  )
+
+  assert_eq $'fetch origin refs/heads/feature/same-branch:refs/remotes/origin/feature/same-branch\ncheckout -B feature/same-branch refs/remotes/origin/feature/same-branch\nreset --hard\nclean -ffd' "$(cat "$actions_file")"
+}
+
+test_prepare_pr_workspace_uses_pr_head_branch_for_forks() {
+  local tmpdir actions_file meta_json
+  tmpdir=$(mktemp -d)
+  actions_file="$tmpdir/actions.log"
+  meta_json='{"number":77,"headRefName":"feature/fork-branch","headRepositoryCloneUrl":"https://github.com/octo/fork.git","isCrossRepository":true}'
+
+  (
+    source "$ROOT_DIR/lib/gh.sh"
+    export TEST_ACTIONS_FILE="$actions_file"
+
+    git() {
+      printf '%s\n' "$*" >>"$TEST_ACTIONS_FILE"
+      if [[ "$1" == "remote" && "$2" == "get-url" && "$3" == "pr-loop-head-77" ]]; then
+        return 1
+      fi
+      return 0
+    }
+
+    gh_prepare_pr_workspace 77 "$meta_json"
+
+    assert_eq "pr-loop-head-77" "$PR_LOOP_PUSH_REMOTE"
+    assert_eq "feature/fork-branch" "$PR_LOOP_PUSH_REF"
+  )
+
+  assert_eq $'remote get-url pr-loop-head-77\nremote add pr-loop-head-77 https://github.com/octo/fork.git\nfetch pr-loop-head-77 refs/heads/feature/fork-branch:refs/remotes/pr-loop-head-77/feature/fork-branch\ncheckout -B feature/fork-branch refs/remotes/pr-loop-head-77/feature/fork-branch\nreset --hard\nclean -ffd' "$(cat "$actions_file")"
+}
+
+test_run_claude_for_pr_streams_output_to_stdout() {
+  local tmpdir stdout_file stderr_file
+  tmpdir=$(mktemp -d)
+  stdout_file="$tmpdir/stdout.log"
+  stderr_file="$tmpdir/stderr.log"
+
+  (
+    source "$ROOT_DIR/worker.sh"
+    log_info() { :; }
+    log_warn() { :; }
+    build_claude_prompt() { printf 'prompt\n'; }
+    export PR_LOOP_CLAUDE_CMD='printf "runner-out\n"; printf "runner-err\n" >&2; printf "RESULT_STAGE=review\n"'
+
+    run_claude_for_pr 42 plan deadbeef '{}' "$tmpdir/context.json" '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
+
+    assert_eq "review" "$CLAUDE_REQUESTED_STAGE"
+    assert_contains "runner-out" "$(cat "$stdout_file")"
+    assert_contains "runner-err" "$(cat "$stdout_file")"
+    assert_contains "RESULT_STAGE=review" "$(cat "$stdout_file")"
+    assert_eq "" "$(cat "$stderr_file")"
+  )
+}
+
 test_scan_open_issues_creates_missing_prs_only() {
   local tmpdir actions_file
   tmpdir=$(mktemp -d)
@@ -336,6 +410,18 @@ EOF
   )
 
   assert_eq $'seed:1:main\npr:1:First issue:Issue body for PR 1:main' "$(cat "$actions_file")"
+}
+
+test_make_install_copies_prompt_template() {
+  local tmpdir prefix
+  tmpdir=$(mktemp -d)
+  prefix="$tmpdir/prefix"
+
+  make -C "$ROOT_DIR" install PREFIX="$prefix" >/dev/null
+
+  [[ -x "$prefix/bin/pr-loop" ]] || fail "expected installed launcher at $prefix/bin/pr-loop"
+  [[ -f "$prefix/lib/pr-loop/prompts/claude-pr-worker.prompt.tmpl" ]] || fail "expected installed prompt template"
+  assert_eq "$(cat "$ROOT_DIR/prompts/claude-pr-worker.prompt.tmpl")" "$(cat "$prefix/lib/pr-loop/prompts/claude-pr-worker.prompt.tmpl")"
 }
 
 test_process_pr_reloads_state_and_recomputes_snapshot() {
@@ -404,7 +490,7 @@ EOF
       "$ROOT_DIR/statectl.sh" set-hint "focus reviewer" >/dev/null
       printf 'record-solved-comment:99\n' >>"$TEST_ACTIONS_FILE"
       "$ROOT_DIR/statectl.sh" add-solved-comment 99 >/dev/null
-      printf '%s\n' "impl"
+      CLAUDE_REQUESTED_STAGE=impl
     }
     gh_post_stage_marker() {
       TEST_POSTED_STAGE=$2
@@ -446,7 +532,11 @@ main() {
   run_test test_entrypoint_script_dirs_are_isolated_from_libs
   run_test test_find_related_pr_number_matches_branch_or_issue_reference
   run_test test_seed_issue_branch_creates_plan_branch_from_default
+  run_test test_prepare_pr_workspace_uses_pr_head_branch_for_same_repo
+  run_test test_prepare_pr_workspace_uses_pr_head_branch_for_forks
+  run_test test_run_claude_for_pr_streams_output_to_stdout
   run_test test_scan_open_issues_creates_missing_prs_only
+  run_test test_make_install_copies_prompt_template
   run_test test_process_pr_reloads_state_and_recomputes_snapshot
 
   printf '\nPassed: %d\nFailed: %d\n' "$pass_count" "$fail_count"

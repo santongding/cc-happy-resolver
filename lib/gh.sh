@@ -325,22 +325,21 @@ gh_pr_snapshot() {
 gh_prepare_pr_workspace() {
   local pr_number=$1
   local meta_json=${2:-}
-  local push_remote push_ref remote_name clone_url
+  local push_remote push_ref remote_name clone_url branch_name tracking_ref
 
   if [[ -z "$meta_json" ]]; then
     meta_json=$(gh_pr_meta "$pr_number") || return 1
   fi
 
-  log_info "preparing git workspace for PR #$pr_number"
-
-  git fetch origin "pull/$pr_number/head:refs/remotes/origin/pr-loop/$pr_number"
-  git checkout -B "pr-loop/$pr_number" "refs/remotes/origin/pr-loop/$pr_number"
-  git reset --hard
-  git clean -ffd
-
   push_ref=$(printf '%s\n' "$meta_json" | jq -r '.headRefName // ""')
   clone_url=$(printf '%s\n' "$meta_json" | jq -r '.headRepositoryCloneUrl // ""')
+  branch_name=$push_ref
   push_remote=origin
+  tracking_ref="refs/remotes/origin/$branch_name"
+
+  [[ -n "$branch_name" ]] || die "missing headRefName for PR #$pr_number"
+
+  log_info "preparing git workspace for PR #$pr_number branch=$branch_name"
 
   if [[ "$(printf '%s\n' "$meta_json" | jq -r '.isCrossRepository // false')" == "true" && -n "$clone_url" ]]; then
     remote_name="pr-loop-head-$pr_number"
@@ -350,11 +349,20 @@ gh_prepare_pr_workspace() {
       git remote add "$remote_name" "$clone_url"
     fi
     push_remote=$remote_name
+    tracking_ref="refs/remotes/$remote_name/$branch_name"
+  elif [[ "$(printf '%s\n' "$meta_json" | jq -r '.isCrossRepository // false')" == "true" ]]; then
+    die "missing head repository clone URL for cross-repository PR #$pr_number"
+    return 1
   fi
+
+  git fetch "$push_remote" "refs/heads/$branch_name:$tracking_ref"
+  git checkout -B "$branch_name" "$tracking_ref"
+  git reset --hard
+  git clean -ffd
 
   export PR_LOOP_PUSH_REMOTE="$push_remote"
   export PR_LOOP_PUSH_REF="$push_ref"
-  log_info "workspace ready for PR #$pr_number on branch pr-loop/$pr_number push_target=$push_remote HEAD:$push_ref"
+  log_info "workspace ready for PR #$pr_number on branch $branch_name push_target=$push_remote HEAD:$push_ref"
 }
 
 gh_post_stage_marker() {
