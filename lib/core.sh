@@ -5,8 +5,6 @@ if [[ -n "${PR_LOOP_CORE_SH_LOADED:-}" ]]; then
 fi
 PR_LOOP_CORE_SH_LOADED=1
 
-readonly PR_LOOP_DEFAULT_HINT_MAX=240
-
 log_prefix() {
   printf '[pr-loop][repo=%s][pr=%s][%s]' \
     "${PR_LOOP_LOG_REPO:-?}" \
@@ -138,9 +136,26 @@ issue_scan_lock_file() {
   printf '%s/issues-scan.lock\n' "$(ensure_repo_state_dir)"
 }
 
+pr_mark_queue_file() {
+  local pr_number=$1
+  local queue_kind=$2
+  printf '%s/pr-%s.%s\n' "$(ensure_repo_state_dir)" "$pr_number" "$queue_kind"
+}
+
+mark_queue_file_for_state() {
+  local state_file=$1
+  local suffix=$2
+  local dir base
+
+  dir=$(dirname "$state_file")
+  base=$(basename "$state_file")
+  base=${base%.state.json}
+  printf '%s/%s.%s\n' "$dir" "$base" "$suffix"
+}
+
 default_state_json() {
   cat <<'EOF'
-{"current_stage":"","hint":"","last_head_sha":"","last_pr_updated_at":"","last_snapshot":"","last_solved_comment_ids":[],"last_stage":"","recent_bot_comment_ids":[],"updated_at":""}
+{"current_stage":"","last_stage":""}
 EOF
 }
 
@@ -155,27 +170,12 @@ load_state_json() {
 
   if jq -e . "$file" >/dev/null 2>&1; then
     jq -cS '
-      .last_solved_comment_ids = (
-        ((.last_solved_comment_ids // [])
-        + (.last_solved_comments // [])
-        + (.last_solved_subcomments // []))
-        | unique
-      )
-      | .recent_bot_comment_ids = (
-        ((.recent_bot_comment_ids // [])
-        + (.recent_bot_issue_comment_ids // [])
-        + (.recent_bot_review_reply_ids // []))
-        | unique
-      )
-      | .last_stage = (.last_stage // "")
+      .last_stage = (.last_stage // "")
       | .current_stage = (.current_stage // .next_stage // "")
-      | del(
-          .last_solved_comments,
-          .last_solved_subcomments,
-          .next_stage,
-          .recent_bot_issue_comment_ids,
-          .recent_bot_review_reply_ids
-        )
+      | {
+          current_stage: .current_stage,
+          last_stage: .last_stage
+        }
     ' "$file"
     return 0
   fi
@@ -226,19 +226,6 @@ state_write_json() {
     return 1
   }
   printf '%s\n' "$normalized" | atomic_write "$file"
-}
-
-json_array_add_unique() {
-  local json=$1
-  local field=$2
-  local raw_value=$3
-
-  printf '%s\n' "$json" | jq -c --arg field "$field" --arg raw "$raw_value" '
-    .[$field] = (
-      ((.[$field] // []) + [($raw | fromjson? // $raw)])
-      | unique
-    )
-  '
 }
 
 now_utc() {

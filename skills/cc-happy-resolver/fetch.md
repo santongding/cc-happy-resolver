@@ -4,8 +4,8 @@ Shared setup for every stage:
 - Infer the repo from `git remote`.
 - Verify you are operating on the current PR head.
 - Read PR metadata, the current head SHA, current-head review state, unresolved review threads, and CI state for the current head.
-- Use the provided recent solved external comment ids, recent bot comment ids, and one-line hint to avoid repeating work and duplicate comments.
-- Do not update state during fetch. When you later need to record comment-tracking state or a next-pass hint, use the prompt-provided `statectl.sh` path and do not hard-code a different path.
+- Treat comments with a GitHub `hooray` reaction as already read/resolved for later loops.
+- Do not update state during fetch. When you later need to record that you addressed a comment, use the prompt-provided `statectl.sh` path and do not hard-code a different path.
 
 Useful commands while gathering current-head state:
 - Inspect CI for the PR head:
@@ -44,8 +44,8 @@ Pass contract:
 Fetch useful, non-replicated PR messages:
 - Review the current head only. Prefer review data whose `commit_id` matches the current PR head SHA.
 - Inspect unresolved review threads and CI on the current head before deciding what to do next.
-- Ignore machine-written stage-marker comments and your own recent bot comments when looking for external feedback to address.
-- Use the stored solved-comment ids to avoid re-answering the same external review comment unless new head changes make it relevant again.
+- Ignore machine-written stage-marker comments and other bot special-mark comments when looking for external feedback to address.
+- Use existing `hooray` reactions to avoid re-answering the same external review comment unless new head changes make it relevant again.
 - When several comments say the same thing, address the issue once and reply only where that feedback was actually addressed.
 - If a comment is stale, already resolved, or superseded by newer feedback on the current head, do not duplicate work.
 - Only require or trigger code review when you are in `review` stage.

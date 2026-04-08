@@ -11,6 +11,26 @@ source "$PR_LOOP_GH_LIB_DIR/core.sh"
 readonly PR_LOOP_STAGE_PREFIX='[pr-loop-bot] PR-LOOP:STAGE:'
 readonly PR_LOOP_STAGE_SUFFIX=':DO-NOT-EDIT'
 readonly PR_LOOP_STAGE_REGEX='^[[:space:]]*\[pr-loop-bot\][[:space:]]*(PR-LOOP:STAGE:(plan|impl|review|finished):DO-NOT-EDIT|<!--[[:space:]]*PR-LOOP:STAGE:(plan|impl|review|finished):DO-NOT-EDIT[[:space:]]*-->)[[:space:]]*$'
+readonly PR_LOOP_BOT_COMMENT_PREFIX='[pr-loop-bot]'
+readonly PR_LOOP_GH_PR_FIELDS_JQ='
+{
+  number,
+  state: ((.state // "") | ascii_upcase),
+  updatedAt: (.updated_at // ""),
+  headRefOid: (.head.sha // ""),
+  headRefName: (.head.ref // ""),
+  headRepositoryName: (.head.repo.name // ""),
+  headRepositoryOwner: (.head.repo.owner.login // ""),
+  headRepositoryCloneUrl: (.head.repo.clone_url // ""),
+  baseRepositoryName: (.base.repo.name // ""),
+  baseRepositoryOwner: (.base.repo.owner.login // ""),
+  maintainerCanModify: (.maintainer_can_modify // false),
+  isCrossRepository: ((.head.repo.full_name // "") != (.base.repo.full_name // "")),
+  title: (.title // ""),
+  body: (.body // ""),
+  htmlUrl: (.html_url // "")
+}
+'
 
 gh_api_with_retry() {
   local max_attempts=${PR_LOOP_GH_API_RETRY_MAX_ATTEMPTS:-3}
@@ -49,27 +69,7 @@ gh_list_open_prs() {
   slug=$(repo_slug) || return 1
   log_info "listing open PRs for $slug"
 
-  gh_api_with_retry --paginate --slurp "repos/$slug/pulls?state=open&per_page=100" | jq -c '
-    [
-      .[][]? | {
-        number,
-        state: ((.state // "") | ascii_upcase),
-        updatedAt: (.updated_at // ""),
-        headRefOid: (.head.sha // ""),
-        headRefName: (.head.ref // ""),
-        headRepositoryName: (.head.repo.name // ""),
-        headRepositoryOwner: (.head.repo.owner.login // ""),
-        headRepositoryCloneUrl: (.head.repo.clone_url // ""),
-        baseRepositoryName: (.base.repo.name // ""),
-        baseRepositoryOwner: (.base.repo.owner.login // ""),
-        maintainerCanModify: (.maintainer_can_modify // false),
-        isCrossRepository: ((.head.repo.full_name // "") != (.base.repo.full_name // "")),
-        title: (.title // ""),
-        body: (.body // ""),
-        htmlUrl: (.html_url // "")
-      }
-    ]
-  '
+  gh_api_with_retry --paginate --slurp "repos/$slug/pulls?state=open&per_page=100" | jq -c "[.[][]? | $PR_LOOP_GH_PR_FIELDS_JQ]"
 }
 
 gh_list_all_prs() {
@@ -77,27 +77,7 @@ gh_list_all_prs() {
   slug=$(repo_slug) || return 1
   log_info "listing all PRs for $slug"
 
-  gh_api_with_retry --paginate --slurp "repos/$slug/pulls?state=all&per_page=100" | jq -c '
-    [
-      .[][]? | {
-        number,
-        state: ((.state // "") | ascii_upcase),
-        updatedAt: (.updated_at // ""),
-        headRefOid: (.head.sha // ""),
-        headRefName: (.head.ref // ""),
-        headRepositoryName: (.head.repo.name // ""),
-        headRepositoryOwner: (.head.repo.owner.login // ""),
-        headRepositoryCloneUrl: (.head.repo.clone_url // ""),
-        baseRepositoryName: (.base.repo.name // ""),
-        baseRepositoryOwner: (.base.repo.owner.login // ""),
-        maintainerCanModify: (.maintainer_can_modify // false),
-        isCrossRepository: ((.head.repo.full_name // "") != (.base.repo.full_name // "")),
-        title: (.title // ""),
-        body: (.body // ""),
-        htmlUrl: (.html_url // "")
-      }
-    ]
-  '
+  gh_api_with_retry --paginate --slurp "repos/$slug/pulls?state=all&per_page=100" | jq -c "[.[][]? | $PR_LOOP_GH_PR_FIELDS_JQ]"
 }
 
 gh_list_open_issues() {
@@ -228,30 +208,7 @@ gh_pr_meta() {
   slug=$(repo_slug) || return 1
   log_info "fetching lightweight metadata for PR #$pr_number"
 
-  gh_api_with_retry "repos/$slug/pulls/$pr_number" | jq -c '
-    {
-      number,
-      state: ((.state // "") | ascii_upcase),
-      updatedAt: (.updated_at // ""),
-      headRefOid: (.head.sha // ""),
-      headRefName: (.head.ref // ""),
-      headRepositoryName: (.head.repo.name // ""),
-      headRepositoryOwner: (.head.repo.owner.login // ""),
-      headRepositoryCloneUrl: (.head.repo.clone_url // ""),
-      baseRepositoryName: (.base.repo.name // ""),
-      baseRepositoryOwner: (.base.repo.owner.login // ""),
-      maintainerCanModify: (.maintainer_can_modify // false),
-      isCrossRepository: ((.head.repo.full_name // "") != (.base.repo.full_name // "")),
-      title: (.title // ""),
-      body: (.body // ""),
-      htmlUrl: (.html_url // "")
-    }
-  '
-}
-
-gh_pr_is_open() {
-  local pr_number=$1
-  [[ "$(gh_pr_meta "$pr_number" | jq -r '.state')" == "OPEN" ]]
+  gh_api_with_retry "repos/$slug/pulls/$pr_number" | jq -c "$PR_LOOP_GH_PR_FIELDS_JQ"
 }
 
 gh_collect_context() {
@@ -271,6 +228,7 @@ gh_collect_context() {
         updatedAt: (.updated_at // ""),
         authorLogin: (.user.login // ""),
         authorAssociation: (.author_association // ""),
+        reactions: (.reactions // {}),
         url: (.html_url // .url // "")
       }
     ]
@@ -289,6 +247,7 @@ gh_collect_context() {
         originalCommitId: (.original_commit_id // ""),
         authorLogin: (.user.login // ""),
         authorAssociation: (.author_association // ""),
+        reactions: (.reactions // {}),
         url: (.html_url // .url // "")
       }
     ]
@@ -375,6 +334,52 @@ gh_pr_snapshot() {
     }
   ' "$ctx_file") || return 1
   printf '%s\n' "$normalized" | sha256_stream
+}
+
+gh_pr_has_unresolved_hooray_comments() {
+  local ctx_file=$1
+
+  jq -e --arg bot_prefix "$PR_LOOP_BOT_COMMENT_PREFIX" '
+    def has_hooray: ((.reactions.hooray // 0) | tonumber) > 0;
+    def special_bot_comment: ((.body // "") | startswith($bot_prefix));
+    . as $ctx
+    | (
+        [
+          $ctx.issueComments[]?
+          | select((has_hooray | not) and (special_bot_comment | not))
+        ]
+        +
+        [
+          $ctx.reviewComments[]?
+          | select(
+              (((.commitId // "") == "") or ((.commitId // "") == ($ctx.meta.headRefOid // "")))
+              and (has_hooray | not)
+              and (special_bot_comment | not)
+            )
+        ]
+      ) | length > 0
+  ' "$ctx_file" >/dev/null
+}
+
+gh_add_issue_comment_hooray() {
+  local comment_id=$1
+  gh_add_comment_reaction "issues/comments" "$comment_id" "issue"
+}
+
+gh_add_review_comment_hooray() {
+  local comment_id=$1
+  gh_add_comment_reaction "pulls/comments" "$comment_id" "review"
+}
+
+gh_add_comment_reaction() {
+  local api_path=$1
+  local comment_id=$2
+  local comment_type=$3
+  local slug
+
+  slug=$(repo_slug) || return 1
+  log_info "adding hooray reaction to $comment_type comment id=$comment_id"
+  gh_api_with_retry --method POST "repos/$slug/$api_path/$comment_id/reactions" -f content='hooray' >/dev/null
 }
 
 gh_prepare_pr_workspace() {

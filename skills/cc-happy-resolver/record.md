@@ -4,26 +4,18 @@ Recording and persistence rules:
 - You may modify normal repo files for experiments or implementation, but persist only intentional changes.
 - If you change code or `PROGRESS.md` and want the next pass or PR readers to rely on that state, `git add`, `git commit`, and run the prompt-provided push command before posting summary comments or recording the next stage.
 - Before moving to `finished`, remove transient bot-owned status artifacts such as `PROGRESS.md` from the branch head.
-- Record bot comments and solved external comments only after the related GitHub comments already exist.
-- Treat `statectl.sh` as a narrow handoff channel, not a general state API. It is only for recording which external comments were handled, which bot comments belong to the current pass, an optional one-line hint for the next pass, and the final next-stage decision.
+- Record handled comments only after the related GitHub comments already exist.
+- Treat `statectl.sh` as a narrow handoff channel, not a general state API. It is only for recording which comments should receive a `hooray` reaction after the pass and the final next-stage decision.
 
 State recording order:
-1. Clear per-pass bot comment ids before recording new ones.
-2. Record the new bot comment ids via `statectl.sh`.
-3. Record solved external comment ids via `statectl.sh`.
-4. Optionally update the one-line next-pass hint via `statectl.sh`.
-5. Record the chosen next stage via `statectl.sh` last.
+1. Record each addressed issue comment via `statectl.sh`.
+2. Record each addressed review comment or review reply via `statectl.sh`.
+3. Record the chosen next stage via `statectl.sh` last.
 
 State update commands:
-- Clear per-pass bot comment ids before recording new ones:
-`<statectl-path> clear-recent-bot-comments`
-- Record the new top-level bot summary comment id after the comment exists:
-`<statectl-path> add-bot-issue-comment "$SUMMARY_ID"`
-- Record the new bot review reply id after the reply exists:
-`<statectl-path> add-bot-review-reply "$REPLY_ID"`
-- Record addressed external review comments after bot comments are already recorded:
-`<statectl-path> add-solved-comment <id>`
-- Update the next-pass hint when useful. Keep it to one short line:
-`<statectl-path> set-hint "..."`
+- Record an addressed issue comment after the comment exists:
+`<statectl-path> mark-comment <id>`
+- Record an addressed review comment or review reply after the comment exists:
+`<statectl-path> mark-sub-comment <id>`
 - Record the next stage at the very end:
 `<statectl-path> set-next-stage impl`

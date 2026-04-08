@@ -6,7 +6,7 @@ It does three things:
 
 - Scans open issues and creates a seed branch + seed PR when an issue does not already have one.
 - Scans open PRs and runs a worker against each PR that needs another pass.
-- Tracks per-PR state so the worker only re-runs when GitHub-visible state changes or when the stage advances.
+- Keeps only per-PR stage handoff state locally and uses GitHub `hooray` reactions as the source of truth for resolved comments.
 
 ## What It Can Do
 
@@ -18,7 +18,7 @@ It does three things:
 - Infer the PR stage from bot stage-marker comments.
 - Prepare a clean local checkout of the PR branch.
 - Invoke Claude with the bundled `cc-happy-resolver` skill for a single pass.
-- Persist state such as last snapshot, last stage, solved comment IDs, and hints between passes.
+- Persist only the current stage and last stage between passes.
 
 ## How It Works
 
@@ -29,7 +29,7 @@ Each PR moves through these stages:
 - `review`
 - `finished`
 
-The worker reads the current PR context, runs one Claude pass for the current stage, and expects Claude to record the next stage through `statectl.sh`. Stage changes are published back to GitHub as bot comments so the next pass can resume from the right point.
+The worker reads the current PR context, runs one Claude pass for the current stage, and expects Claude to record the next stage through `statectl.sh`. Claude also records addressed comment IDs through `statectl.sh`; after the pass, the worker adds a GitHub `hooray` reaction to those comments. Comments with `hooray` are treated as read/resolved on later loops.
 
 The loop stores state under:
 
@@ -147,7 +147,7 @@ If you want to run the worker on one PR directly:
 ./worker.sh 123
 ```
 
-This fetches PR context, checks out a clean copy of the PR branch locally, runs one Claude pass, and persists updated state.
+This fetches PR context, checks out a clean copy of the PR branch locally, runs one Claude pass, applies queued `hooray` reactions, and persists updated stage state.
 
 ## Important Behavior
 
@@ -193,8 +193,6 @@ Useful environment variables:
 - `PR_LOOP_GIT_USER_EMAIL`: author email for seed commits
 - `PR_LOOP_GH_API_RETRY_MAX_ATTEMPTS`: GitHub API retry count
 - `PR_LOOP_GH_API_RETRY_DELAY_SECONDS`: GitHub API retry delay
-- `PR_LOOP_HINT_MAX_LEN`: max stored hint length for `statectl.sh set-hint`
-
 ## Repository Layout
 
 Key files:
@@ -212,6 +210,6 @@ Key files:
 1. Run `pr-loop --once` or `pr-loop`.
 2. Missing issue PRs are created automatically.
 3. Each open PR is inspected.
-4. If its snapshot or stage changed, the worker runs one Claude pass.
-5. The pass records the next stage with `statectl.sh`.
-6. The worker posts the new stage marker if needed and saves updated state.
+4. If it has unresolved non-bot-special comments without `hooray`, or its stage needs another pass, the worker runs one Claude pass.
+5. The pass records addressed comments and the next stage with `statectl.sh`.
+6. The worker adds queued `hooray` reactions, posts the new stage marker if needed, and saves updated stage state.

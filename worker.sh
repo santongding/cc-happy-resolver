@@ -46,75 +46,32 @@ cleanup() {
   return "$status"
 }
 
-should_skip_pr() {
-  local meta_json=$1
-  local state_json=$2
-  local current_updated_at last_updated_at
-  local last_stage current_stage
-
-  current_updated_at=$(printf '%s\n' "$meta_json" | jq -r '.updatedAt // ""')
-  last_updated_at=$(printf '%s\n' "$state_json" | jq -r '.last_pr_updated_at // ""')
-  last_stage=$(printf '%s\n' "$state_json" | jq -r '.last_stage // ""')
-  current_stage=$(printf '%s\n' "$state_json" | jq -r '.current_stage // ""')
-
-  if [[ -z "$last_updated_at" ]]; then
-    return 1
-  fi
-
-  if [[ -n "$current_stage" && "$current_stage" != "$last_stage" ]]; then
-    return 1
-  fi
-
-  [[ "$current_updated_at" < "$last_updated_at" || "$current_updated_at" == "$last_updated_at" ]]
-}
-
-git_worktree_dirty() {
-  [[ -n "$(git status --porcelain --untracked-files=normal)" ]]
-}
-
 persist_system_state() {
-  local snapshot=$1
-  local meta_json=$2
-  local last_stage=$3
-  local current_stage=$4
-  local latest_state_json head_sha pr_updated_at next_json
+  local last_stage=$1
+  local current_stage=$2
+  local latest_state_json next_json
 
   latest_state_json=$(load_state_json "$STATE_FILE")
-  head_sha=$(printf '%s\n' "$meta_json" | jq -r '.headRefOid // ""')
-  pr_updated_at=$(printf '%s\n' "$meta_json" | jq -r '.updatedAt // ""')
 
   next_json=$(printf '%s\n' "$latest_state_json" | jq -c \
-    --arg snapshot "$snapshot" \
-    --arg head_sha "$head_sha" \
-    --arg pr_updated_at "$pr_updated_at" \
     --arg last_stage "$last_stage" \
-    --arg current_stage "$current_stage" \
-    --arg updated_at "$(now_utc)" '
-      .last_snapshot = $snapshot
-      | .last_head_sha = $head_sha
-      | .last_pr_updated_at = $pr_updated_at
-      | .last_stage = $last_stage
+    --arg current_stage "$current_stage" '
+      .last_stage = $last_stage
       | .current_stage = $current_stage
-      | .updated_at = $updated_at
     ')
 
   state_write_json "$STATE_FILE" "$next_json"
-  log_info "persisted state file=$STATE_FILE updatedAt=$pr_updated_at head=${head_sha:0:12} snapshot=${snapshot:0:12}"
+  log_info "persisted state file=$STATE_FILE last_stage=$last_stage current_stage=$current_stage"
 }
 
 build_claude_prompt() {
   local pr_number=$1
   local stage=$2
   local head_sha=$3
-  local state_json=$4
-  local meta_json=$5
-  local solved_comment_ids recent_bot_comment_ids
-  local hint title url push_remote push_ref
+  local meta_json=$4
+  local title url push_remote push_ref
   local template_file prompt
 
-  solved_comment_ids=$(printf '%s\n' "$state_json" | jq -r '[.last_solved_comment_ids[]? | tostring] | join(",")')
-  recent_bot_comment_ids=$(printf '%s\n' "$state_json" | jq -r '[.recent_bot_comment_ids[]? | tostring] | join(",")')
-  hint=$(printf '%s\n' "$state_json" | jq -r '.hint // ""')
   title=$(printf '%s\n' "$meta_json" | jq -r '.title // ""')
   url=$(printf '%s\n' "$meta_json" | jq -r '.htmlUrl // ""')
   push_remote=${PR_LOOP_PUSH_REMOTE:-origin}
@@ -129,9 +86,6 @@ build_claude_prompt() {
   prompt=${prompt//__URL__/$url}
   prompt=${prompt//__STAGE__/$stage}
   prompt=${prompt//__HEAD_SHA__/$head_sha}
-  prompt=${prompt//__LAST_SOLVED_COMMENT_IDS__/${solved_comment_ids:-<none>}}
-  prompt=${prompt//__RECENT_BOT_COMMENT_IDS__/${recent_bot_comment_ids:-<none>}}
-  prompt=${prompt//__HINT__/${hint:-<none>}}
   prompt=${prompt//__PUSH_REMOTE__/$push_remote}
   prompt=${prompt//__PUSH_REF__/$push_ref}
   prompt=${prompt//__WORKER_DIR__/$PR_LOOP_WORKER_DIR}
@@ -143,8 +97,7 @@ run_claude_for_pr() {
   local pr_number=$1
   local stage=$2
   local head_sha=$3
-  local state_json=$4
-  local meta_json=$5
+  local meta_json=$4
   local claude_cmd claude_filter exit_code filter_exit
   local requested_stage raw_stdout_pipe stdout_pipe stderr_pipe
   local stdout_tee_pid stderr_tee_pid filter_pid stdout_tee_exit stderr_tee_exit
@@ -158,7 +111,7 @@ run_claude_for_pr() {
   rm -f "$raw_stdout_pipe" "$stdout_pipe" "$stderr_pipe"
   mkfifo "$raw_stdout_pipe" "$stdout_pipe" "$stderr_pipe"
 
-  build_claude_prompt "$pr_number" "$stage" "$head_sha" "$state_json" "$meta_json" >"$PROMPT_FILE"
+  build_claude_prompt "$pr_number" "$stage" "$head_sha" "$meta_json" >"$PROMPT_FILE"
 
   claude_cmd=${PR_LOOP_CLAUDE_CMD:-claude -p --verbose --output-format stream-json --dangerously-skip-permissions}
   claude_filter=${PR_LOOP_CLAUDE_OUTPUT_FILTER:-$PR_LOOP_WORKER_DIR/claude-output-filter.sh}
@@ -212,6 +165,110 @@ run_claude_for_pr() {
   fi
 }
 
+queue_ids_from_file() {
+  local file=$1
+  local line
+  local -a ids=()
+  local seen_lines=$'\n'
+
+  [[ -f "$file" ]] || return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[0-9]+$ ]] || continue
+    if [[ "$seen_lines" != *$'\n'"$line"$'\n'* ]]; then
+      ids+=("$line")
+      seen_lines+="$line"$'\n'
+    fi
+  done <"$file"
+
+  if ((${#ids[@]} == 0)); then
+    return 0
+  fi
+
+  printf '%s\n' "${ids[@]}"
+}
+
+rewrite_queue_file() {
+  local file=$1
+  shift || true
+
+  if (($# == 0)); then
+    rm -f "$file"
+    return 0
+  fi
+
+  printf '%s\n' "$@" | atomic_write "$file"
+}
+
+apply_queue_reactions() {
+  local file=$1
+  local reaction_fn=$2
+  local comment_type=$3
+  local comment_id
+  local -a ids=()
+  local -a remaining=()
+
+  while IFS= read -r comment_id; do
+    [[ -n "$comment_id" ]] || continue
+    ids+=("$comment_id")
+  done < <(queue_ids_from_file "$file")
+
+  if ((${#ids[@]} == 0)); then
+    return 0
+  fi
+
+  for comment_id in "${ids[@]}"; do
+    if "$reaction_fn" "$comment_id"; then
+      log_info "applied hooray to $comment_type comment id=$comment_id"
+    else
+      log_warn "failed to apply hooray to $comment_type comment id=$comment_id"
+      remaining+=("$comment_id")
+    fi
+  done
+
+  if ((${#remaining[@]} > 0)); then
+    rewrite_queue_file "$file" "${remaining[@]}"
+  else
+    rewrite_queue_file "$file"
+  fi
+}
+
+flush_mark_queues() {
+  local pr_number=$1
+  local issue_queue review_queue
+
+  issue_queue=$(pr_mark_queue_file "$pr_number" "mark-comment.ids")
+  review_queue=$(pr_mark_queue_file "$pr_number" "mark-sub-comment.ids")
+
+  apply_queue_reactions "$issue_queue" gh_add_issue_comment_hooray issue
+  apply_queue_reactions "$review_queue" gh_add_review_comment_hooray review
+}
+
+should_run_pr() {
+  local ctx_file=$1
+  local state_json=$2
+  local github_stage=$3
+  local stored_last_stage stored_current_stage
+
+  stored_last_stage=$(printf '%s\n' "$state_json" | jq -r '.last_stage // ""')
+  stored_current_stage=$(printf '%s\n' "$state_json" | jq -r '.current_stage // ""')
+
+  if [[ -z "$stored_current_stage" ]]; then
+    return 0
+  fi
+
+  if [[ "$stored_current_stage" != "$stored_last_stage" ]]; then
+    return 0
+  fi
+
+  if [[ "$stored_current_stage" != "$github_stage" ]]; then
+    return 0
+  fi
+
+  gh_pr_has_unresolved_hooray_comments "$ctx_file" && return 0
+  return 1
+}
+
 validate_stage_transition() {
   local current_stage=$1
   local requested_stage=$2
@@ -236,10 +293,8 @@ validate_stage_transition() {
 
 process_pr() {
   local pr_number=$1
-  local state_json meta_json current_stage pre_snapshot last_snapshot head_sha
-  local requested_stage next_stage github_changed=0
-  local pending_stage_transition=0
-  local refreshed_meta_json refreshed_ctx_json final_snapshot final_meta_json
+  local state_json meta_json current_stage head_sha
+  local requested_stage next_stage
 
   export PR_LOOP_LOG_PR="$pr_number"
   STATE_FILE=$(pr_state_file "$pr_number")
@@ -262,43 +317,34 @@ process_pr() {
   fi
 
   state_json=$(load_state_json "$STATE_FILE")
-  log_info "loaded state last_pr_updated_at=$(printf '%s\n' "$state_json" | jq -r '.last_pr_updated_at // ""') last_snapshot=$(printf '%s\n' "$state_json" | jq -r '.last_snapshot // ""' | cut -c1-12)"
-  if should_skip_pr "$meta_json" "$state_json"; then
-    log_info "updatedAt has not advanced; skipping deep processing"
-    return 0
-  fi
+  log_info "loaded state last_stage=$(printf '%s\n' "$state_json" | jq -r '.last_stage // ""') current_stage=$(printf '%s\n' "$state_json" | jq -r '.current_stage // ""')"
 
   gh_write_context_cache "$(gh_collect_context "$pr_number")" "$CTX_FILE"
   current_stage=$(gh_pr_stage "$CTX_FILE")
-  pre_snapshot=$(gh_pr_snapshot "$CTX_FILE")
-  if [[ "$(printf '%s\n' "$state_json" | jq -r '.current_stage // ""')" != "$(printf '%s\n' "$state_json" | jq -r '.last_stage // ""')" ]]; then
-    pending_stage_transition=1
-  fi
-  log_info "current stage=$current_stage pre_snapshot=${pre_snapshot:0:12}"
+  log_info "current stage=$current_stage"
 
   if [[ "$current_stage" == "finished" ]]; then
-    persist_system_state "$pre_snapshot" "$meta_json" "$current_stage" "$current_stage"
+    persist_system_state "$current_stage" "$current_stage"
     log_info "PR is already finished"
     return 0
   fi
 
-  last_snapshot=$(printf '%s\n' "$state_json" | jq -r '.last_snapshot // ""')
-  if [[ "$pending_stage_transition" != "1" && -n "$last_snapshot" && "$last_snapshot" == "$pre_snapshot" ]]; then
-    persist_system_state "$pre_snapshot" "$meta_json" "$current_stage" "$current_stage"
-    log_info "snapshot unchanged; skipping (snapshot=${pre_snapshot:0:12})"
+  if ! should_run_pr "$CTX_FILE" "$state_json" "$current_stage"; then
+    persist_system_state "$current_stage" "$current_stage"
+    log_info "no pending stage change or unresolved hooray-gated comments; skipping"
     return 0
   fi
 
   gh_prepare_pr_workspace "$pr_number" "$meta_json"
   head_sha=$(printf '%s\n' "$meta_json" | jq -r '.headRefOid // ""')
-  run_claude_for_pr "$pr_number" "$current_stage" "$head_sha" "$state_json" "$meta_json"
+  run_claude_for_pr "$pr_number" "$current_stage" "$head_sha" "$meta_json"
+  flush_mark_queues "$pr_number"
   requested_stage=${CLAUDE_REQUESTED_STAGE:-$current_stage}
   next_stage=$(validate_stage_transition "$current_stage" "$requested_stage")
   log_info "stage decision current=$current_stage requested=$requested_stage next=$next_stage"
 
   if [[ "$next_stage" != "$current_stage" ]]; then
     if gh_post_stage_marker "$pr_number" "$next_stage" >/dev/null; then
-      github_changed=1
       log_info "posted stage marker for $next_stage"
     else
       log_warn "failed to post stage marker; keeping current stage"
@@ -306,24 +352,7 @@ process_pr() {
     fi
   fi
 
-  refreshed_meta_json=$(gh_pr_meta "$pr_number")
-  final_meta_json=$meta_json
-  final_snapshot=$pre_snapshot
-
-  if [[ "$github_changed" == "1" ]] \
-    || [[ "$(printf '%s\n' "$refreshed_meta_json" | jq -r '.updatedAt // ""')" != "$(printf '%s\n' "$meta_json" | jq -r '.updatedAt // ""')" ]] \
-    || [[ "$(printf '%s\n' "$refreshed_meta_json" | jq -r '.headRefOid // ""')" != "$(printf '%s\n' "$meta_json" | jq -r '.headRefOid // ""')" ]]; then
-    log_info "reloading context for final snapshot because GitHub-visible state changed"
-    refreshed_ctx_json=$(gh_collect_context "$pr_number")
-    gh_write_context_cache "$refreshed_ctx_json" "$CTX_FILE"
-    final_snapshot=$(gh_pr_snapshot "$CTX_FILE")
-    final_meta_json=$(printf '%s\n' "$refreshed_ctx_json" | jq -c '.meta')
-  else
-    log_info "reusing pre_snapshot as final snapshot"
-  fi
-
-  log_info "final snapshot=${final_snapshot:0:12}"
-  persist_system_state "$final_snapshot" "$final_meta_json" "$current_stage" "$next_stage"
+  persist_system_state "$current_stage" "$next_stage"
   log_info "completed processing"
 }
 

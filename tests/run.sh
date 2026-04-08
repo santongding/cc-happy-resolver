@@ -98,38 +98,37 @@ test_git_checkout_detached_head_releases_branch() {
   )
 }
 
-test_state_round_trip_and_array_uniqueness() {
-  local tmpdir state_file json
+test_state_round_trip_keeps_only_stage_fields() {
+  local tmpdir state_file state_json
   tmpdir=$(mktemp -d)
   state_file="$tmpdir/pr-1.state.json"
   state_write_json "$state_file" "$(default_state_json)"
-  json=$(json_array_add_unique "$(load_state_json "$state_file")" "last_solved_comment_ids" "42")
-  json=$(json_array_add_unique "$json" "last_solved_comment_ids" "42")
-  state_write_json "$state_file" "$json"
-  assert_eq "[42]" "$(jq -c '.last_solved_comment_ids' "$state_file")"
+  state_json=$(load_state_json "$state_file")
+  assert_eq '{"current_stage":"","last_stage":""}' "$state_json"
 }
 
-test_statectl_updates_are_sanitized_and_scoped() {
-  local tmpdir state_file lock_file state_json
+test_statectl_marks_comment_queues() {
+  local tmpdir state_file lock_file issue_queue review_queue
   tmpdir=$(mktemp -d)
   state_file="$tmpdir/pr-2.state.json"
   lock_file="$tmpdir/pr-2.lock"
   printf '%s\n' "$$" >"$lock_file"
   state_write_json "$state_file" "$(default_state_json)"
+  issue_queue="$tmpdir/pr-2.mark-comment.ids"
+  review_queue="$tmpdir/pr-2.mark-sub-comment.ids"
 
   (
     export PR_LOOP_STATE_FILE="$state_file"
     export PR_LOOP_LOCK_FILE="$lock_file"
     export PR_LOOP_WORKER_PID="$$"
-    "$ROOT_DIR/statectl.sh" set-hint $'review\nlater'
-    "$ROOT_DIR/statectl.sh" add-solved-comment 5
-    "$ROOT_DIR/statectl.sh" add-solved-comment 5
-    "$ROOT_DIR/statectl.sh" add-solved-subcomment 9
+    "$ROOT_DIR/statectl.sh" mark-comment 5
+    "$ROOT_DIR/statectl.sh" mark-comment 5
+    "$ROOT_DIR/statectl.sh" mark-sub-comment 9
   )
 
-  state_json=$(load_state_json "$state_file")
-  assert_eq "review later" "$(printf '%s\n' "$state_json" | jq -r '.hint')"
-  assert_eq "[5,9]" "$(printf '%s\n' "$state_json" | jq -c '.last_solved_comment_ids')"
+  assert_eq $'5\n5' "$(cat "$issue_queue")"
+  assert_eq "9" "$(cat "$review_queue")"
+  assert_eq '{"current_stage":"","last_stage":""}' "$(load_state_json "$state_file")"
 }
 
 test_statectl_rolls_stage_state() {
@@ -153,59 +152,61 @@ test_statectl_rolls_stage_state() {
   assert_eq "finished" "$(printf '%s\n' "$state_json" | jq -r '.current_stage')"
 }
 
-test_statectl_tracks_recent_bot_comment_ids() {
-  local tmpdir state_file lock_file state_json
-  tmpdir=$(mktemp -d)
-  state_file="$tmpdir/pr-3.state.json"
-  lock_file="$tmpdir/pr-3.lock"
-  printf '%s\n' "$$" >"$lock_file"
-  state_write_json "$state_file" "$(default_state_json)"
-
-  (
-    export PR_LOOP_STATE_FILE="$state_file"
-    export PR_LOOP_LOCK_FILE="$lock_file"
-    export PR_LOOP_WORKER_PID="$$"
-    "$ROOT_DIR/statectl.sh" add-bot-comment 101
-    "$ROOT_DIR/statectl.sh" add-bot-comment 101
-    "$ROOT_DIR/statectl.sh" add-bot-comment 205
-    "$ROOT_DIR/statectl.sh" clear-recent-bot-comments
-    "$ROOT_DIR/statectl.sh" add-bot-comment 301
-    "$ROOT_DIR/statectl.sh" add-bot-comment 401
-  )
-
-  state_json=$(load_state_json "$state_file")
-  assert_eq "[301,401]" "$(printf '%s\n' "$state_json" | jq -c '.recent_bot_comment_ids')"
-}
-
 test_load_state_json_migrates_legacy_comment_fields() {
   local tmpdir state_file state_json
   tmpdir=$(mktemp -d)
   state_file="$tmpdir/pr-4.state.json"
 
   cat >"$state_file" <<'EOF'
-{"hint":"legacy","last_solved_comments":[12],"last_solved_subcomments":[34],"recent_bot_issue_comment_ids":[56],"recent_bot_review_reply_ids":[78],"updated_at":"2026-04-06T00:00:00Z"}
+{"hint":"legacy","last_solved_comments":[12],"last_solved_subcomments":[34],"recent_bot_issue_comment_ids":[56],"recent_bot_review_reply_ids":[78],"updated_at":"2026-04-06T00:00:00Z","current_stage":"impl","last_stage":"plan"}
 EOF
 
   state_json=$(load_state_json "$state_file")
-  assert_eq "[12,34]" "$(printf '%s\n' "$state_json" | jq -c '.last_solved_comment_ids')"
-  assert_eq "[56,78]" "$(printf '%s\n' "$state_json" | jq -c '.recent_bot_comment_ids')"
-  assert_eq "" "$(printf '%s\n' "$state_json" | jq -r '.last_stage')"
-  assert_eq "" "$(printf '%s\n' "$state_json" | jq -r '.current_stage')"
+  assert_eq '{"current_stage":"impl","last_stage":"plan"}' "$state_json"
 }
 
-test_should_skip_pr_allows_pending_stage_transition() {
-  local meta_json state_json
+test_should_run_pr_allows_pending_stage_transition() {
+  local tmpdir ctx_file state_json
+  tmpdir=$(mktemp -d)
+  ctx_file="$tmpdir/ctx.json"
+  state_json='{"last_stage":"plan","current_stage":"impl"}'
 
-  meta_json='{"updatedAt":"2026-04-06T00:02:00Z"}'
-  state_json='{"last_pr_updated_at":"2026-04-06T00:02:00Z","last_stage":"plan","current_stage":"impl"}'
+  cat >"$ctx_file" <<'EOF'
+{"meta":{"headRefOid":"abc"},"issueComments":[],"reviewComments":[],"reviews":[]}
+EOF
 
-  if should_skip_pr "$meta_json" "$state_json"; then
-    fail "expected pending stage transition to bypass should_skip_pr"
+  if ! should_run_pr "$ctx_file" "$state_json" "impl"; then
+    fail "expected pending stage transition to force a run"
   fi
 }
 
-test_process_pr_runs_next_stage_even_when_metadata_and_snapshot_are_unchanged() {
-  local tmpdir state_root repo_dir state_file lock_file actions_file final_state expected_snapshot
+test_gh_pr_has_unresolved_hooray_comments_ignores_special_bot_comments() {
+  local tmpdir ctx_file
+  tmpdir=$(mktemp -d)
+  ctx_file="$tmpdir/ctx.json"
+
+  cat >"$ctx_file" <<'EOF'
+{
+  "meta": {"headRefOid":"abc"},
+  "issueComments": [
+    {"id": 10, "body": "[pr-loop-bot] machine comment", "reactions": {"hooray": 0}},
+    {"id": 11, "body": "human issue comment", "reactions": {"hooray": 1}}
+  ],
+  "reviewComments": [
+    {"id": 20, "body": "[pr-loop-bot] machine reply", "commitId": "abc", "reactions": {"hooray": 0}},
+    {"id": 21, "body": "human review comment", "commitId": "abc", "reactions": {"hooray": 1}}
+  ],
+  "reviews": []
+}
+EOF
+
+  if gh_pr_has_unresolved_hooray_comments "$ctx_file"; then
+    fail "expected only special bot comments without hooray to be ignored"
+  fi
+}
+
+test_process_pr_runs_next_stage_when_stage_transition_is_pending() {
+  local tmpdir state_root repo_dir state_file lock_file actions_file final_state
   tmpdir=$(mktemp -d)
   state_root="$tmpdir/state"
   repo_dir="$tmpdir/repo"
@@ -223,9 +224,7 @@ test_process_pr_runs_next_stage_even_when_metadata_and_snapshot_are_unchanged() 
     export PR_LOOP_LOG_REPO="test__repo"
     export PR_LOOP_LOG_PR="8"
     state_write_json "$state_file" "$(jq -c '
-      .last_pr_updated_at = "2026-04-06T00:02:00Z"
-      | .last_snapshot = "pending-stage-snapshot"
-      | .last_stage = "plan"
+      .last_stage = "plan"
       | .current_stage = "impl"
     ' <<<"$(default_state_json)")"
 
@@ -255,16 +254,10 @@ EOF
     }
     process_pr 8
   )
-
-  expected_snapshot=$(cat <<'EOF' | jq -cS . | sha256_stream
-{"state":"OPEN","headRefOid":"def","stage":"impl","issueComments":[{"id":201,"updatedAt":"2026-04-06T00:02:00Z"}],"reviewComments":[]}
-EOF
-)
   final_state=$(load_state_json "$state_file")
   assert_eq "run-stage:impl" "$(cat "$actions_file")"
   assert_eq "impl" "$(printf '%s\n' "$final_state" | jq -r '.last_stage')"
   assert_eq "impl" "$(printf '%s\n' "$final_state" | jq -r '.current_stage')"
-  assert_eq "$expected_snapshot" "$(printf '%s\n' "$final_state" | jq -r '.last_snapshot')"
 }
 
 test_stage_parsing_uses_only_strict_markers() {
@@ -380,30 +373,26 @@ test_gh_api_with_retry_retries_transient_failures() {
 }
 
 test_build_claude_prompt_renders_standalone_template() {
-  local prompt state_json meta_json
-
-  state_json=$(cat <<'EOF'
-{"last_solved_comment_ids":[12,34],"recent_bot_comment_ids":[88,99,100],"hint":"focus review follow-up"}
-EOF
-)
+  local prompt meta_json
   meta_json=$(cat <<'EOF'
 {"title":"Tighten worker prompt rendering","htmlUrl":"https://example.invalid/pr/42","headRefName":"feature/prompt-template"}
 EOF
 )
 
   (
-    prompt=$(build_claude_prompt 42 review deadbeef "$state_json" "$meta_json")
+    prompt=$(build_claude_prompt 42 review deadbeef "$meta_json")
     assert_contains "PR: 42" "$prompt"
     assert_contains "Title: Tighten worker prompt rendering" "$prompt"
     assert_contains "URL: https://example.invalid/pr/42" "$prompt"
     assert_contains "Stage: review" "$prompt"
     assert_contains "Head SHA: deadbeef" "$prompt"
-    assert_contains "Recent solved external comments: 12,34" "$prompt"
-    assert_contains "Recent bot comments: 88,99,100" "$prompt"
-    assert_contains "Hint: focus review follow-up" "$prompt"
     assert_contains "Statectl Path: $ROOT_DIR/statectl.sh" "$prompt"
     assert_contains "Push Command: git push origin HEAD:feature/prompt-template" "$prompt"
     assert_contains 'Use the installed Claude skill `cc-happy-resolver`.' "$prompt"
+    assert_contains "Comment handoff contract:" "$prompt"
+    assert_contains "mark-comment <comment-id>" "$prompt"
+    assert_contains "mark-sub-comment <comment-id>" "$prompt"
+    assert_contains 'comments with `hooray` are treated as read/resolved in later loops' "$prompt"
     assert_contains "Final output contract:" "$prompt"
     assert_contains "Do not use terminal output to report the next stage" "$prompt"
     assert_contains "Record the next stage with: $ROOT_DIR/statectl.sh set-next-stage <plan|impl|review|finished>" "$prompt"
@@ -816,8 +805,8 @@ test_make_install_copies_prompt_template_and_skill() {
   assert_eq "$(cat "$ROOT_DIR/skills/cc-happy-resolver/SKILL.md")" "$(cat "$skillsdir/cc-happy-resolver/SKILL.md")"
 }
 
-test_process_pr_reloads_state_and_recomputes_snapshot() {
-  local tmpdir state_file lock_file actions_file final_state expected_snapshot
+test_process_pr_flushes_mark_queues_and_persists_stages() {
+  local tmpdir state_file lock_file actions_file final_state
 
   tmpdir=$(mktemp -d)
   state_file="$tmpdir/pr-7.state.json"
@@ -834,7 +823,6 @@ test_process_pr_reloads_state_and_recomputes_snapshot() {
     export TEST_LOCK_FILE="$lock_file"
     export TEST_ACTIONS_FILE="$actions_file"
     export TEST_POSTED_STAGE=
-    export TEST_COLLECT_PHASE=pre
 
     repo_state_dir() { printf '%s\n' "$TEST_TMPDIR"; }
     ensure_repo_state_dir() { mkdir -p "$TEST_TMPDIR"; printf '%s\n' "$TEST_TMPDIR"; }
@@ -843,26 +831,14 @@ test_process_pr_reloads_state_and_recomputes_snapshot() {
     acquire_lock() { printf '%s\n' "$$" >"$1"; return 0; }
     release_lock() { rm -f "$1"; return 0; }
     gh_pr_meta() {
-      if [[ "${TEST_COLLECT_PHASE:-pre}" == "post" ]]; then
-        cat <<'EOF'
-{"number":7,"state":"OPEN","updatedAt":"2026-04-06T00:02:00Z","headRefOid":"abc","headRefName":"feature","headRepositoryCloneUrl":"https://github.com/acme/demo.git","isCrossRepository":false,"title":"Test PR","htmlUrl":"https://example.invalid/pr/7"}
-EOF
-      else
-        cat <<'EOF'
+      cat <<'EOF'
 {"number":7,"state":"OPEN","updatedAt":"2026-04-06T00:01:00Z","headRefOid":"abc","headRefName":"feature","headRepositoryCloneUrl":"https://github.com/acme/demo.git","isCrossRepository":false,"title":"Test PR","htmlUrl":"https://example.invalid/pr/7"}
 EOF
-      fi
     }
     gh_collect_context() {
-      if [[ "${TEST_COLLECT_PHASE:-pre}" == "post" ]]; then
-        cat <<'EOF'
-{"meta":{"state":"OPEN","headRefOid":"abc","updatedAt":"2026-04-06T00:02:00Z"},"issueComments":[{"id":101,"body":"[pr-loop-bot] <!-- PR-LOOP:STAGE:impl:DO-NOT-EDIT -->","createdAt":"2026-04-06T00:02:00Z","updatedAt":"2026-04-06T00:02:00Z"}],"reviewComments":[],"reviews":[]}
+      cat <<'EOF'
+{"meta":{"state":"OPEN","headRefOid":"abc","updatedAt":"2026-04-06T00:01:00Z"},"issueComments":[{"id":501,"body":"human issue comment","createdAt":"2026-04-06T00:00:00Z","updatedAt":"2026-04-06T00:00:00Z","reactions":{"hooray":0}}],"reviewComments":[{"id":601,"body":"human review comment","commitId":"abc","updatedAt":"2026-04-06T00:00:00Z","reactions":{"hooray":0}}],"reviews":[]}
 EOF
-      else
-        cat <<'EOF'
-{"meta":{"state":"OPEN","headRefOid":"abc","updatedAt":"2026-04-06T00:01:00Z"},"issueComments":[],"reviewComments":[],"reviews":[]}
-EOF
-      fi
     }
     gh_prepare_pr_workspace() {
       export PR_LOOP_PUSH_REMOTE=origin
@@ -873,21 +849,20 @@ EOF
       export PR_LOOP_LOCK_FILE="$TEST_LOCK_FILE"
       export PR_LOOP_WORKER_PID="$$"
       printf 'post-issue-comment:501\n' >>"$TEST_ACTIONS_FILE"
-      "$ROOT_DIR/statectl.sh" clear-recent-bot-comments >/dev/null
-      printf 'record-bot-issue-comment:501\n' >>"$TEST_ACTIONS_FILE"
-      "$ROOT_DIR/statectl.sh" add-bot-comment 501 >/dev/null
+      "$ROOT_DIR/statectl.sh" mark-comment 501 >/dev/null
       printf 'post-review-reply:601\n' >>"$TEST_ACTIONS_FILE"
-      printf 'record-bot-review-reply:601\n' >>"$TEST_ACTIONS_FILE"
-      "$ROOT_DIR/statectl.sh" add-bot-comment 601 >/dev/null
-      "$ROOT_DIR/statectl.sh" set-hint "focus reviewer" >/dev/null
-      printf 'record-solved-comment:99\n' >>"$TEST_ACTIONS_FILE"
-      "$ROOT_DIR/statectl.sh" add-solved-comment 99 >/dev/null
+      "$ROOT_DIR/statectl.sh" mark-sub-comment 601 >/dev/null
       "$ROOT_DIR/statectl.sh" set-next-stage impl >/dev/null
       CLAUDE_REQUESTED_STAGE=$(state_read_json "$TEST_STATE_FILE" '.current_stage // ""' "")
     }
+    gh_add_issue_comment_hooray() {
+      printf 'hooray-issue:%s\n' "$1" >>"$TEST_ACTIONS_FILE"
+    }
+    gh_add_review_comment_hooray() {
+      printf 'hooray-review:%s\n' "$1" >>"$TEST_ACTIONS_FILE"
+    }
     gh_post_stage_marker() {
       TEST_POSTED_STAGE=$2
-      export TEST_COLLECT_PHASE=post
       return 0
     }
     process_pr 7
@@ -895,18 +870,11 @@ EOF
   )
 
   final_state=$(load_state_json "$state_file")
-  expected_snapshot=$(cat <<'EOF' | jq -cS . | sha256_stream
-{"state":"OPEN","headRefOid":"abc","stage":"impl","issueComments":[{"id":101,"updatedAt":"2026-04-06T00:02:00Z"}],"reviewComments":[]}
-EOF
-)
-  assert_eq $'post-issue-comment:501\nrecord-bot-issue-comment:501\npost-review-reply:601\nrecord-bot-review-reply:601\nrecord-solved-comment:99' "$(cat "$actions_file")"
-  assert_eq "focus reviewer" "$(printf '%s\n' "$final_state" | jq -r '.hint')"
-  assert_eq "[99]" "$(printf '%s\n' "$final_state" | jq -c '.last_solved_comment_ids')"
-  assert_eq "[501,601]" "$(printf '%s\n' "$final_state" | jq -c '.recent_bot_comment_ids')"
+  assert_eq $'post-issue-comment:501\npost-review-reply:601\nhooray-issue:501\nhooray-review:601' "$(cat "$actions_file")"
   assert_eq "plan" "$(printf '%s\n' "$final_state" | jq -r '.last_stage')"
   assert_eq "impl" "$(printf '%s\n' "$final_state" | jq -r '.current_stage')"
-  assert_eq "2026-04-06T00:02:00Z" "$(printf '%s\n' "$final_state" | jq -r '.last_pr_updated_at')"
-  assert_eq "$expected_snapshot" "$(printf '%s\n' "$final_state" | jq -r '.last_snapshot')"
+  [[ ! -f "$tmpdir/pr-7.mark-comment.ids" ]] || fail "expected issue mark queue to be cleared"
+  [[ ! -f "$tmpdir/pr-7.mark-sub-comment.ids" ]] || fail "expected review mark queue to be cleared"
 }
 
 main() {
@@ -915,12 +883,12 @@ main() {
 
   run_test test_repo_slug_parsing
   run_test test_git_checkout_detached_head_releases_branch
-  run_test test_state_round_trip_and_array_uniqueness
-  run_test test_statectl_updates_are_sanitized_and_scoped
+  run_test test_state_round_trip_keeps_only_stage_fields
+  run_test test_statectl_marks_comment_queues
   run_test test_statectl_rolls_stage_state
-  run_test test_statectl_tracks_recent_bot_comment_ids
   run_test test_load_state_json_migrates_legacy_comment_fields
-  run_test test_should_skip_pr_allows_pending_stage_transition
+  run_test test_should_run_pr_allows_pending_stage_transition
+  run_test test_gh_pr_has_unresolved_hooray_comments_ignores_special_bot_comments
   run_test test_stage_parsing_uses_only_strict_markers
   run_test test_stage_marker_rendering_is_human_visible
   run_test test_snapshot_changes_when_review_reply_changes
@@ -940,8 +908,8 @@ main() {
   run_test test_scan_open_issues_creates_missing_prs_only
   run_test test_scan_open_issues_treats_closed_related_pr_as_existing
   run_test test_make_install_copies_prompt_template_and_skill
-  run_test test_process_pr_runs_next_stage_even_when_metadata_and_snapshot_are_unchanged
-  run_test test_process_pr_reloads_state_and_recomputes_snapshot
+  run_test test_process_pr_runs_next_stage_when_stage_transition_is_pending
+  run_test test_process_pr_flushes_mark_queues_and_persists_stages
 
   printf '\nPassed: %d\nFailed: %d\n' "$pass_count" "$fail_count"
   [[ "$fail_count" -eq 0 ]]
