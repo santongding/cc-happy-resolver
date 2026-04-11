@@ -4,7 +4,7 @@ Shared setup for every stage:
 - Infer the repo from `git remote`.
 - Verify you are operating on the current PR head.
 - Read PR metadata, the current head SHA, current-head review state, unresolved review threads, and CI state for the current head.
-- Treat comments with a GitHub `hooray` reaction as already read/resolved for later loops.
+- Use the provided issue/review comment ID lists to focus on the comments that still need attention in this pass.
 - Do not update state during fetch. When you later need to record that you addressed a comment, use the prompt-provided `statectl.sh` path and do not hard-code a different path.
 
 Useful commands while gathering current-head state:
@@ -45,7 +45,7 @@ Fetch useful, non-replicated PR messages:
 - Review the current head only. Prefer review data whose `commit_id` matches the current PR head SHA.
 - Inspect unresolved review threads and CI on the current head before deciding what to do next.
 - Ignore machine-written stage-marker comments and other bot special-mark comments when looking for external feedback to address.
-- Use existing `hooray` reactions to avoid re-answering the same external review comment unless new head changes make it relevant again.
+- Prioritize the comments whose IDs appear in the prompt-provided lists before addressing anything else.
 - When several comments say the same thing, address the issue once and reply only where that feedback was actually addressed.
 - If a comment is stale, already resolved, or superseded by newer feedback on the current head, do not duplicate work.
 - Only require or trigger code review when you are in `review` stage.

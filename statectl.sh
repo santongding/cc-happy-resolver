@@ -9,6 +9,7 @@ PR_LOOP_LOG_MODULE=statectl
 require_lock_context() {
   [[ -n "${PR_LOOP_STATE_FILE:-}" ]] || die "PR_LOOP_STATE_FILE is required"
   [[ -n "${PR_LOOP_LOCK_FILE:-}" ]] || die "PR_LOOP_LOCK_FILE is required"
+  [[ -n "${PR_LOOP_PR_NUMBER:-}" ]] || die "PR_LOOP_PR_NUMBER is required"
   [[ -n "${PR_LOOP_WORKER_PID:-}" ]] || die "PR_LOOP_WORKER_PID is required"
   [[ -f "${PR_LOOP_LOCK_FILE}" ]] || die "worker lock file is missing"
   kill -0 "$PR_LOOP_WORKER_PID" >/dev/null 2>&1 || die "worker process is not running"
@@ -31,11 +32,11 @@ append_numeric_id() {
 }
 
 comment_mark_file() {
-  mark_queue_file_for_state "$PR_LOOP_STATE_FILE" "mark-comment.ids"
+  printf '%s/pr-%s.mark-comment.ids\n' "$(dirname "$PR_LOOP_STATE_FILE")" "$PR_LOOP_PR_NUMBER"
 }
 
 subcomment_mark_file() {
-  mark_queue_file_for_state "$PR_LOOP_STATE_FILE" "mark-sub-comment.ids"
+  printf '%s/pr-%s.mark-sub-comment.ids\n' "$(dirname "$PR_LOOP_STATE_FILE")" "$PR_LOOP_PR_NUMBER"
 }
 
 cmd_mark_comment() {

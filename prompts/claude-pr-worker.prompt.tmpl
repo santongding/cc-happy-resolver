@@ -3,6 +3,8 @@ Title: __TITLE__
 URL: __URL__
 Stage: __STAGE__
 Head SHA: __HEAD_SHA__
+Issue Comment IDs To Consider: __PENDING_ISSUE_COMMENT_IDS__
+Review Comment IDs To Consider: __PENDING_REVIEW_COMMENT_IDS__
 
 Statectl Path: __WORKER_DIR__/statectl.sh
 Push Command: git push __PUSH_REMOTE__ HEAD:__PUSH_REF__
@@ -12,7 +14,7 @@ Use the installed Claude skill `cc-happy-resolver`.
 Comment handoff contract:
 - After you address an issue comment, record it with: __WORKER_DIR__/statectl.sh mark-comment <comment-id>
 - After you address a review comment or review reply, record it with: __WORKER_DIR__/statectl.sh mark-sub-comment <comment-id>
-- The worker adds a `hooray` reaction after the pass; comments with `hooray` are treated as read/resolved in later loops
+- Use the provided comment ID lists to prioritize which comments still need action in this pass
 
 Final output contract:
 - Do not use terminal output to report the next stage

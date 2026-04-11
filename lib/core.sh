@@ -142,17 +142,6 @@ pr_mark_queue_file() {
   printf '%s/pr-%s.%s\n' "$(ensure_repo_state_dir)" "$pr_number" "$queue_kind"
 }
 
-mark_queue_file_for_state() {
-  local state_file=$1
-  local suffix=$2
-  local dir base
-
-  dir=$(dirname "$state_file")
-  base=$(basename "$state_file")
-  base=${base%.state.json}
-  printf '%s/%s.%s\n' "$dir" "$base" "$suffix"
-}
-
 default_state_json() {
   cat <<'EOF'
 {"current_stage":"","last_stage":""}

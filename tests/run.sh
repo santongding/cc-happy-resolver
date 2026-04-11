@@ -120,6 +120,7 @@ test_statectl_marks_comment_queues() {
   (
     export PR_LOOP_STATE_FILE="$state_file"
     export PR_LOOP_LOCK_FILE="$lock_file"
+    export PR_LOOP_PR_NUMBER="2"
     export PR_LOOP_WORKER_PID="$$"
     "$ROOT_DIR/statectl.sh" mark-comment 5
     "$ROOT_DIR/statectl.sh" mark-comment 5
@@ -142,6 +143,7 @@ test_statectl_rolls_stage_state() {
   (
     export PR_LOOP_STATE_FILE="$state_file"
     export PR_LOOP_LOCK_FILE="$lock_file"
+    export PR_LOOP_PR_NUMBER="next-stage"
     export PR_LOOP_WORKER_PID="$$"
     "$ROOT_DIR/statectl.sh" set-next-stage review
     "$ROOT_DIR/statectl.sh" set-next-stage finished
@@ -203,6 +205,33 @@ EOF
   if gh_pr_has_unresolved_hooray_comments "$ctx_file"; then
     fail "expected only special bot comments without hooray to be ignored"
   fi
+}
+
+test_gh_pr_pending_comment_ids_excludes_special_bot_comments() {
+  local tmpdir ctx_file pending_ids_json
+  tmpdir=$(mktemp -d)
+  ctx_file="$tmpdir/ctx.json"
+
+  cat >"$ctx_file" <<'EOF'
+{
+  "meta": {"headRefOid":"abc"},
+  "issueComments": [
+    {"id": 10, "body": "[pr-loop-bot] machine comment", "reactions": {"hooray": 0}},
+    {"id": 11, "body": "human issue comment", "reactions": {"hooray": 0}},
+    {"id": 12, "body": "resolved issue comment", "reactions": {"hooray": 1}}
+  ],
+  "reviewComments": [
+    {"id": 20, "body": "[pr-loop-bot] machine reply", "commitId": "abc", "reactions": {"hooray": 0}},
+    {"id": 21, "body": "human review comment", "commitId": "abc", "reactions": {"hooray": 0}},
+    {"id": 22, "body": "resolved review comment", "commitId": "abc", "reactions": {"hooray": 1}}
+  ],
+  "reviews": []
+}
+EOF
+
+  pending_ids_json=$(gh_pr_pending_comment_ids_json "$ctx_file")
+  assert_eq "[11]" "$(printf '%s\n' "$pending_ids_json" | jq -c '.issueCommentIds')"
+  assert_eq "[21]" "$(printf '%s\n' "$pending_ids_json" | jq -c '.reviewCommentIds')"
 }
 
 test_process_pr_runs_next_stage_when_stage_transition_is_pending() {
@@ -373,26 +402,33 @@ test_gh_api_with_retry_retries_transient_failures() {
 }
 
 test_build_claude_prompt_renders_standalone_template() {
-  local prompt meta_json
+  local prompt meta_json pending_ids_json
   meta_json=$(cat <<'EOF'
 {"title":"Tighten worker prompt rendering","htmlUrl":"https://example.invalid/pr/42","headRefName":"feature/prompt-template"}
 EOF
 )
+  pending_ids_json=$(cat <<'EOF'
+{"issueCommentIds":[12,34],"reviewCommentIds":[88,99,100]}
+EOF
+)
 
   (
-    prompt=$(build_claude_prompt 42 review deadbeef "$meta_json")
+    prompt=$(build_claude_prompt 42 review deadbeef "$meta_json" "$pending_ids_json")
     assert_contains "PR: 42" "$prompt"
     assert_contains "Title: Tighten worker prompt rendering" "$prompt"
     assert_contains "URL: https://example.invalid/pr/42" "$prompt"
     assert_contains "Stage: review" "$prompt"
     assert_contains "Head SHA: deadbeef" "$prompt"
+    assert_contains "Issue Comment IDs To Consider: 12,34" "$prompt"
+    assert_contains "Review Comment IDs To Consider: 88,99,100" "$prompt"
     assert_contains "Statectl Path: $ROOT_DIR/statectl.sh" "$prompt"
     assert_contains "Push Command: git push origin HEAD:feature/prompt-template" "$prompt"
     assert_contains 'Use the installed Claude skill `cc-happy-resolver`.' "$prompt"
     assert_contains "Comment handoff contract:" "$prompt"
     assert_contains "mark-comment <comment-id>" "$prompt"
     assert_contains "mark-sub-comment <comment-id>" "$prompt"
-    assert_contains 'comments with `hooray` are treated as read/resolved in later loops' "$prompt"
+    assert_contains "Use the provided comment ID lists to prioritize which comments still need action in this pass" "$prompt"
+    assert_not_contains "hooray" "$prompt"
     assert_contains "Final output contract:" "$prompt"
     assert_contains "Do not use terminal output to report the next stage" "$prompt"
     assert_contains "Record the next stage with: $ROOT_DIR/statectl.sh set-next-stage <plan|impl|review|finished>" "$prompt"
@@ -613,6 +649,7 @@ test_worker_cleanup_detaches_head_after_processing() {
     gh_collect_context() { printf '%s\n' '{"meta":{"state":"OPEN","headRefOid":"abc","updatedAt":"2026-04-06T00:00:00Z"},"issueComments":[],"reviewComments":[],"reviews":[]}'; }
     gh_pr_stage() { printf 'plan\n'; }
     gh_pr_snapshot() { printf 'snapshot-1\n'; }
+    gh_pr_pending_comment_ids_json() { printf '%s\n' '{"issueCommentIds":[],"reviewCommentIds":[]}'; }
     gh_write_context_cache() { :; }
     gh_prepare_pr_workspace() { git checkout -B feature/test HEAD >/dev/null; }
     run_claude_for_pr() { CLAUDE_REQUESTED_STAGE=plan; }
@@ -644,7 +681,7 @@ test_run_claude_for_pr_streams_output_to_stdout() {
     state_write_json "$STATE_FILE" "$(default_state_json)"
     export PR_LOOP_CLAUDE_CMD="printf 'state=%s\n' \"\$PR_LOOP_STATE_FILE\"; printf 'runner-out\n'; printf 'runner-err\n' >&2; '$ROOT_DIR/statectl.sh' set-next-stage review"
 
-    run_claude_for_pr 42 plan deadbeef '{}' '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
+    run_claude_for_pr 42 plan deadbeef '{"headRefName":"feature"}' '{"issueCommentIds":[],"reviewCommentIds":[]}' >"$stdout_file" 2>"$stderr_file"
 
     assert_eq "review" "$CLAUDE_REQUESTED_STAGE"
     assert_contains "state=$tmpdir/pr-42.state.json" "$(cat "$stdout_file")"
@@ -690,11 +727,12 @@ EOF
     state_write_json "$STATE_FILE" "$(default_state_json)"
     export PR_LOOP_STATE_FILE="$STATE_FILE"
     export PR_LOOP_LOCK_FILE="$LOCK_FILE"
+    export PR_LOOP_PR_NUMBER="42"
     export PR_LOOP_WORKER_PID="$$"
     "$ROOT_DIR/statectl.sh" set-next-stage impl >/dev/null
     export PR_LOOP_CLAUDE_CMD="cat '$fixture'"
 
-    run_claude_for_pr 42 plan deadbeef '{}' '{"headRefName":"feature"}' >"$stdout_file" 2>"$stderr_file"
+    run_claude_for_pr 42 plan deadbeef '{"headRefName":"feature"}' '{"issueCommentIds":[],"reviewCommentIds":[]}' >"$stdout_file" 2>"$stderr_file"
 
     assert_eq "impl" "$CLAUDE_REQUESTED_STAGE"
   )
@@ -847,6 +885,7 @@ EOF
     run_claude_for_pr() {
       export PR_LOOP_STATE_FILE="$TEST_STATE_FILE"
       export PR_LOOP_LOCK_FILE="$TEST_LOCK_FILE"
+      export PR_LOOP_PR_NUMBER="7"
       export PR_LOOP_WORKER_PID="$$"
       printf 'post-issue-comment:501\n' >>"$TEST_ACTIONS_FILE"
       "$ROOT_DIR/statectl.sh" mark-comment 501 >/dev/null
@@ -889,6 +928,7 @@ main() {
   run_test test_load_state_json_migrates_legacy_comment_fields
   run_test test_should_run_pr_allows_pending_stage_transition
   run_test test_gh_pr_has_unresolved_hooray_comments_ignores_special_bot_comments
+  run_test test_gh_pr_pending_comment_ids_excludes_special_bot_comments
   run_test test_stage_parsing_uses_only_strict_markers
   run_test test_stage_marker_rendering_is_human_visible
   run_test test_snapshot_changes_when_review_reply_changes

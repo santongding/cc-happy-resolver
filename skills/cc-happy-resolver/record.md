@@ -5,7 +5,7 @@ Recording and persistence rules:
 - If you change code or `PROGRESS.md` and want the next pass or PR readers to rely on that state, `git add`, `git commit`, and run the prompt-provided push command before posting summary comments or recording the next stage.
 - Before moving to `finished`, remove transient bot-owned status artifacts such as `PROGRESS.md` from the branch head.
 - Record handled comments only after the related GitHub comments already exist.
-- Treat `statectl.sh` as a narrow handoff channel, not a general state API. It is only for recording which comments should receive a `hooray` reaction after the pass and the final next-stage decision.
+- Treat `statectl.sh` as a narrow handoff channel, not a general state API. It is only for recording which comments you addressed in this pass and the final next-stage decision.
 
 State recording order:
 1. Record each addressed issue comment via `statectl.sh`.

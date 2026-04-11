@@ -339,26 +339,33 @@ gh_pr_snapshot() {
 gh_pr_has_unresolved_hooray_comments() {
   local ctx_file=$1
 
+  [[ "$(gh_pr_pending_comment_ids_json "$ctx_file" | jq '(.issueCommentIds | length) + (.reviewCommentIds | length)')" != "0" ]]
+}
+
+gh_pr_pending_comment_ids_json() {
+  local ctx_file=$1
+
   jq -e --arg bot_prefix "$PR_LOOP_BOT_COMMENT_PREFIX" '
     def has_hooray: ((.reactions.hooray // 0) | tonumber) > 0;
     def special_bot_comment: ((.body // "") | startswith($bot_prefix));
     . as $ctx
-    | (
-        [
+    | {
+        issueCommentIds: [
           $ctx.issueComments[]?
           | select((has_hooray | not) and (special_bot_comment | not))
-        ]
-        +
-        [
+          | .id
+        ],
+        reviewCommentIds: [
           $ctx.reviewComments[]?
           | select(
               (((.commitId // "") == "") or ((.commitId // "") == ($ctx.meta.headRefOid // "")))
               and (has_hooray | not)
               and (special_bot_comment | not)
             )
+          | .id
         ]
-      ) | length > 0
-  ' "$ctx_file" >/dev/null
+      }
+  ' "$ctx_file"
 }
 
 gh_add_issue_comment_hooray() {

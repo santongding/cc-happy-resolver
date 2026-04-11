@@ -69,13 +69,16 @@ build_claude_prompt() {
   local stage=$2
   local head_sha=$3
   local meta_json=$4
-  local title url push_remote push_ref
+  local pending_ids_json=$5
+  local title url push_remote push_ref pending_issue_comment_ids pending_review_comment_ids
   local template_file prompt
 
   title=$(printf '%s\n' "$meta_json" | jq -r '.title // ""')
   url=$(printf '%s\n' "$meta_json" | jq -r '.htmlUrl // ""')
   push_remote=${PR_LOOP_PUSH_REMOTE:-origin}
   push_ref=${PR_LOOP_PUSH_REF:-$(printf '%s\n' "$meta_json" | jq -r '.headRefName // ""')}
+  pending_issue_comment_ids=$(printf '%s\n' "$pending_ids_json" | jq -r '[.issueCommentIds[]? | tostring] | join(",")')
+  pending_review_comment_ids=$(printf '%s\n' "$pending_ids_json" | jq -r '[.reviewCommentIds[]? | tostring] | join(",")')
 
   template_file=$PR_LOOP_CLAUDE_PROMPT_TEMPLATE
   [[ -f "$template_file" ]] || die "missing prompt template: $template_file"
@@ -86,6 +89,8 @@ build_claude_prompt() {
   prompt=${prompt//__URL__/$url}
   prompt=${prompt//__STAGE__/$stage}
   prompt=${prompt//__HEAD_SHA__/$head_sha}
+  prompt=${prompt//__PENDING_ISSUE_COMMENT_IDS__/${pending_issue_comment_ids:-<none>}}
+  prompt=${prompt//__PENDING_REVIEW_COMMENT_IDS__/${pending_review_comment_ids:-<none>}}
   prompt=${prompt//__PUSH_REMOTE__/$push_remote}
   prompt=${prompt//__PUSH_REF__/$push_ref}
   prompt=${prompt//__WORKER_DIR__/$PR_LOOP_WORKER_DIR}
@@ -98,6 +103,7 @@ run_claude_for_pr() {
   local stage=$2
   local head_sha=$3
   local meta_json=$4
+  local pending_ids_json=$5
   local claude_cmd claude_filter exit_code filter_exit
   local requested_stage raw_stdout_pipe stdout_pipe stderr_pipe
   local stdout_tee_pid stderr_tee_pid filter_pid stdout_tee_exit stderr_tee_exit
@@ -111,7 +117,7 @@ run_claude_for_pr() {
   rm -f "$raw_stdout_pipe" "$stdout_pipe" "$stderr_pipe"
   mkfifo "$raw_stdout_pipe" "$stdout_pipe" "$stderr_pipe"
 
-  build_claude_prompt "$pr_number" "$stage" "$head_sha" "$meta_json" >"$PROMPT_FILE"
+  build_claude_prompt "$pr_number" "$stage" "$head_sha" "$meta_json" "$pending_ids_json" >"$PROMPT_FILE"
 
   claude_cmd=${PR_LOOP_CLAUDE_CMD:-claude -p --verbose --output-format stream-json --dangerously-skip-permissions}
   claude_filter=${PR_LOOP_CLAUDE_OUTPUT_FILTER:-$PR_LOOP_WORKER_DIR/claude-output-filter.sh}
@@ -188,25 +194,12 @@ queue_ids_from_file() {
   printf '%s\n' "${ids[@]}"
 }
 
-rewrite_queue_file() {
-  local file=$1
-  shift || true
-
-  if (($# == 0)); then
-    rm -f "$file"
-    return 0
-  fi
-
-  printf '%s\n' "$@" | atomic_write "$file"
-}
-
 apply_queue_reactions() {
   local file=$1
   local reaction_fn=$2
   local comment_type=$3
   local comment_id
   local -a ids=()
-  local -a remaining=()
 
   while IFS= read -r comment_id; do
     [[ -n "$comment_id" ]] || continue
@@ -222,15 +215,10 @@ apply_queue_reactions() {
       log_info "applied hooray to $comment_type comment id=$comment_id"
     else
       log_warn "failed to apply hooray to $comment_type comment id=$comment_id"
-      remaining+=("$comment_id")
     fi
   done
 
-  if ((${#remaining[@]} > 0)); then
-    rewrite_queue_file "$file" "${remaining[@]}"
-  else
-    rewrite_queue_file "$file"
-  fi
+  rm -f "$file"
 }
 
 flush_mark_queues() {
@@ -294,7 +282,7 @@ validate_stage_transition() {
 process_pr() {
   local pr_number=$1
   local state_json meta_json current_stage head_sha
-  local requested_stage next_stage
+  local requested_stage next_stage pending_ids_json
 
   export PR_LOOP_LOG_PR="$pr_number"
   STATE_FILE=$(pr_state_file "$pr_number")
@@ -337,7 +325,8 @@ process_pr() {
 
   gh_prepare_pr_workspace "$pr_number" "$meta_json"
   head_sha=$(printf '%s\n' "$meta_json" | jq -r '.headRefOid // ""')
-  run_claude_for_pr "$pr_number" "$current_stage" "$head_sha" "$meta_json"
+  pending_ids_json=$(gh_pr_pending_comment_ids_json "$CTX_FILE")
+  run_claude_for_pr "$pr_number" "$current_stage" "$head_sha" "$meta_json" "$pending_ids_json"
   flush_mark_queues "$pr_number"
   requested_stage=${CLAUDE_REQUESTED_STAGE:-$current_stage}
   next_stage=$(validate_stage_transition "$current_stage" "$requested_stage")
